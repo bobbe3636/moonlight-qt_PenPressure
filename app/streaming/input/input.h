@@ -256,6 +256,7 @@ private:
     bool m_AbsoluteTouchMode;
     bool m_DisabledTouchFeedback;
     void* m_NativePenHwnd;
+    void* m_WacomRaw; // raw Wacom report reader (pen.cpp), for barrel buttons and full pressure
     bool m_NativePenLogged;
     float m_LastPenX;
     float m_LastPenY;

@@ -9,8 +9,12 @@
 
 #include <SDL_syswm.h>
 #include <commctrl.h>
+#include <setupapi.h>
+#include <hidsdi.h>
 
+#include <atomic>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 // Native Windows pen input.
@@ -24,6 +28,137 @@
 
 static constexpr UINT_PTR k_PenSubclassId = 0x4D4C5045; // 'MLPE'
 static constexpr double k_Pi = 3.14159265358979323846;
+
+// Raw Wacom reports.
+//
+// Windows Ink only exposes one barrel button (and only while touching), 1024 pressure levels,
+// and the tablet driver turns the upper button into a local middle click. Wacom's pen tablets
+// also deliver their native report 0x10 on a vendor-defined HID collection (usage page 0xFF00,
+// usage 0x0A; Wacom's router filter wraps it as report 0xDC), which other readers can open
+// alongside the driver. From it we take both barrel switches and the full-resolution pressure;
+// position, tilt and timing still come from WM_POINTER.
+//
+// Report 0x10: [0] id, [1] flags (tip, barrel1, barrel2, eraser, invert, in range, ...),
+// [2..4] X, [5..7] Y, [8..9] pressure (0..8191).
+
+struct WacomRawReader
+{
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    std::thread thread;
+    std::atomic<bool> stop { false };
+    std::atomic<uint8_t> flags { 0 };
+    std::atomic<uint16_t> pressure { 0 };
+    std::atomic<uint64_t> lastReportMs { 0 };
+    std::atomic<bool> seenReport { false };
+    std::atomic<bool> exited { false };
+
+    static constexpr uint8_t k_FlagBarrel1 = 0x02;
+    static constexpr uint8_t k_FlagBarrel2 = 0x04;
+    static constexpr float k_MaxPressure = 8191.0f;
+
+    // Only trust raw state that is current
+    bool fresh() const
+    {
+        return seenReport && GetTickCount64() - lastReportMs < 100;
+    }
+
+    void run()
+    {
+        uint8_t buf[1024];
+        while (!stop) {
+            DWORD n = 0;
+            if (!ReadFile(handle, buf, sizeof(buf), &n, nullptr)) {
+                break;
+            }
+
+            const uint8_t* report = buf;
+            if (n >= 28 && buf[0] == 0xDC && buf[1] == 0x10) {
+                report = buf + 1; // unwrap Wacom's router filter
+                n -= 1;
+            }
+            if (n < 10 || report[0] != 0x10) {
+                continue;
+            }
+
+            flags = report[1];
+            pressure = (uint16_t)(report[8] | (report[9] << 8));
+            lastReportMs = GetTickCount64();
+            if (!seenReport) {
+                seenReport = true;
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using raw Wacom reports for pen buttons and pressure");
+            }
+        }
+        exited = true;
+    }
+
+    static WacomRawReader* open()
+    {
+        GUID hidGuid;
+        HidD_GetHidGuid(&hidGuid);
+        HDEVINFO devs = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+        if (devs == INVALID_HANDLE_VALUE) {
+            return nullptr;
+        }
+
+        WacomRawReader* reader = nullptr;
+        SP_DEVICE_INTERFACE_DATA ifData = {};
+        ifData.cbSize = sizeof(ifData);
+        for (DWORD i = 0; reader == nullptr && SetupDiEnumDeviceInterfaces(devs, nullptr, &hidGuid, i, &ifData); i++) {
+            DWORD size = 0;
+            SetupDiGetDeviceInterfaceDetailW(devs, &ifData, nullptr, 0, &size, nullptr);
+            std::vector<uint8_t> detailBuf(size);
+            auto detail = (SP_DEVICE_INTERFACE_DETAIL_DATA_W*)detailBuf.data();
+            detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+            if (!SetupDiGetDeviceInterfaceDetailW(devs, &ifData, detail, size, nullptr, nullptr) ||
+                    wcsstr(CharLowerW(detail->DevicePath), L"vid_056a") == nullptr) {
+                continue;
+            }
+
+            HANDLE h = CreateFileW(detail->DevicePath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                   nullptr, OPEN_EXISTING, 0, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                continue;
+            }
+
+            bool match = false;
+            PHIDP_PREPARSED_DATA ppd;
+            if (HidD_GetPreparsedData(h, &ppd)) {
+                HIDP_CAPS caps;
+                match = HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS &&
+                        caps.UsagePage == 0xFF00 && caps.Usage == 0x0A;
+                HidD_FreePreparsedData(ppd);
+            }
+
+            if (match) {
+                reader = new WacomRawReader();
+                reader->handle = h;
+                reader->thread = std::thread(&WacomRawReader::run, reader);
+            }
+            else {
+                CloseHandle(h);
+            }
+        }
+
+        SetupDiDestroyDeviceInfoList(devs);
+        return reader;
+    }
+
+    ~WacomRawReader()
+    {
+        stop = true;
+        if (thread.joinable()) {
+            // The reader blocks in a synchronous ReadFile until the pen next reports; cancel
+            // until it has actually left (a cancel can land just before its next read starts)
+            while (!exited) {
+                CancelIoEx(handle, nullptr);
+                CancelSynchronousIo(thread.native_handle());
+                Sleep(5);
+            }
+            thread.join();
+        }
+        CloseHandle(handle);
+    }
+};
 
 static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                         UINT_PTR subclassId, DWORD_PTR refData)
@@ -71,6 +206,7 @@ void SdlInputHandler::installNativePenHook()
 
     if (SetWindowSubclass(info.info.win.window, penSubclassProc, k_PenSubclassId, (DWORD_PTR)this)) {
         m_NativePenHwnd = info.info.win.window;
+        m_WacomRaw = WacomRawReader::open();
     }
     else {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -87,6 +223,9 @@ void SdlInputHandler::removeNativePenHook()
         }
         m_NativePenHwnd = nullptr;
     }
+
+    delete (WacomRawReader*)m_WacomRaw;
+    m_WacomRaw = nullptr;
 }
 
 bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, uintptr_t wParam)
@@ -217,6 +356,20 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             pressureOrDistance = qMin(pen.pressure / 1024.0f, 1.0f);
         }
 
+        // Raw Wacom state, when current, gives both barrel buttons (hovering too) and 8192 levels
+        auto raw = (WacomRawReader*)m_WacomRaw;
+        if (raw != nullptr && raw->fresh()) {
+            uint8_t rawFlags = raw->flags;
+            penButtons = ((rawFlags & WacomRawReader::k_FlagBarrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
+                         ((rawFlags & WacomRawReader::k_FlagBarrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
+            if (flags & POINTER_FLAG_INCONTACT) {
+                uint16_t rawPressure = raw->pressure;
+                if (rawPressure > 0) {
+                    pressureOrDistance = qMin(rawPressure / WacomRawReader::k_MaxPressure, 1.0f);
+                }
+            }
+        }
+
         // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth.
         // This is the exact inverse of the host-side conversion in Sunshine/Apollo.
         uint16_t rotation = LI_ROT_UNKNOWN;
@@ -251,6 +404,13 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     }
     if (!(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) || !isCaptureActive()) {
         return false;
+    }
+
+    // With raw Wacom reports the side buttons already travel as pen buttons; drop the local
+    // driver's synthesized click so the host doesn't get the press twice
+    auto raw = (WacomRawReader*)m_WacomRaw;
+    if (raw != nullptr && raw->fresh()) {
+        return true;
     }
 
     int button;
