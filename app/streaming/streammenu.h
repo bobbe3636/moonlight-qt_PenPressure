@@ -1,8 +1,8 @@
 #pragma once
 
 // The stream menu: a small floating Moonlight button on the stream window that opens a menu
-// with every in-stream command and its shortcut (Parsec style). Drag the button anywhere; it
-// docks to the nearest edge of the window and remembers its place. Windows only; elsewhere
+// with every in-stream command and its shortcut (Parsec style). Drag the button anywhere in
+// the window; it stays where it's dropped and remembers its place. Windows only; elsewhere
 // these are no-ops.
 
 class Session;

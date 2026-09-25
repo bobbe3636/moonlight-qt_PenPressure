@@ -28,8 +28,6 @@
 
 namespace {
 
-enum Edge { EdgeLeft, EdgeTop, EdgeRight, EdgeBottom };
-
 enum Command {
     CmdDisconnect = 1,
     CmdQuitAppAndExit,
@@ -88,8 +86,9 @@ public:
           m_Companion(session->isCompanion()), m_Main((HWND)session->companionParentWindow())
     {
         QSettings settings;
-        m_Edge = qBound(0, settings.value("streammenu/edge", EdgeBottom).toInt(), 3);
-        m_Pos = qBound(0.0, settings.value("streammenu/pos", 0.0).toDouble(), 1.0);
+        // Default: bottom-left corner, like Parsec
+        m_FracX = qBound(0.0, settings.value("streammenu/x", 0.02).toDouble(), 1.0);
+        m_FracY = qBound(0.0, settings.value("streammenu/y", 0.97).toDouble(), 1.0);
         m_Visible = StreamingPreferences::get()->showStreamMenuButton;
         if (!m_Companion) {
             // Shared with the extra screens' menus so their Sound check mark is right
@@ -177,45 +176,31 @@ private:
             return;
         }
 
-        int s = buttonSize(), m = s / 12;  // the canvas already has transparent padding
+        // Wherever it was dropped, as a proportion of the window (so it keeps its place
+        // across resizes and fullscreen toggles)
+        int s = buttonSize();
         RECT rc = clientRectOnScreen();
         int w = rc.right - rc.left, h = rc.bottom - rc.top;
-        int x = rc.left + m, y = rc.top + m;
-        int alongX = rc.left + m + (int)(m_Pos * std::max(0, w - s - 2 * m));
-        int alongY = rc.top + m + (int)(m_Pos * std::max(0, h - s - 2 * m));
-        switch (m_Edge) {
-        case EdgeLeft:   x = rc.left + m;       y = alongY; break;
-        case EdgeRight:  x = rc.right - m - s;  y = alongY; break;
-        case EdgeTop:    x = alongX;            y = rc.top + m; break;
-        default:         x = alongX;            y = rc.bottom - m - s; break;
-        }
+        int x = rc.left + (int)(m_FracX * std::max(0, w - s));
+        int y = rc.top + (int)(m_FracY * std::max(0, h - s));
         if (s != m_RenderedSize) {
             render();
         }
         SetWindowPos(m_Button, nullptr, x, y, s, s, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
     }
 
-    // Dock to the nearest window edge, remembering where along it
-    void snap()
+    // Remember where the button was dropped (free placement, no docking)
+    void savePosition()
     {
         RECT br, rc = clientRectOnScreen();
         GetWindowRect(m_Button, &br);
-        int s = buttonSize(), m = s / 12;  // the canvas already has transparent padding
-        int cx = (br.left + br.right) / 2, cy = (br.top + br.bottom) / 2;
-        int d[4] = { cx - rc.left, cy - rc.top, rc.right - cx, rc.bottom - cy };
-        m_Edge = (int)(std::min_element(d, d + 4) - d);
-
-        double span = (m_Edge == EdgeLeft || m_Edge == EdgeRight)
-                ? std::max(1, (int)(rc.bottom - rc.top) - s - 2 * m)
-                : std::max(1, (int)(rc.right - rc.left) - s - 2 * m);
-        double along = (m_Edge == EdgeLeft || m_Edge == EdgeRight)
-                ? br.top - (rc.top + m)
-                : br.left - (rc.left + m);
-        m_Pos = qBound(0.0, along / span, 1.0);
+        int s = buttonSize();
+        m_FracX = qBound(0.0, (double)(br.left - rc.left) / std::max(1, (int)(rc.right - rc.left) - s), 1.0);
+        m_FracY = qBound(0.0, (double)(br.top - rc.top) / std::max(1, (int)(rc.bottom - rc.top) - s), 1.0);
 
         QSettings settings;
-        settings.setValue("streammenu/edge", m_Edge);
-        settings.setValue("streammenu/pos", m_Pos);
+        settings.setValue("streammenu/x", m_FracX);
+        settings.setValue("streammenu/y", m_FracY);
         reposition();
     }
 
@@ -488,14 +473,13 @@ private:
 
     void openMenuFromButton()
     {
+        // Open towards the middle of the window from wherever the button sits
         RECT br;
         GetWindowRect(m_Button, &br);
-        switch (m_Edge) {
-        case EdgeLeft:  showMenu(br.right + 4, br.top, TPM_LEFTALIGN | TPM_TOPALIGN); break;
-        case EdgeRight: showMenu(br.left - 4, br.top, TPM_RIGHTALIGN | TPM_TOPALIGN); break;
-        case EdgeTop:   showMenu(br.left, br.bottom + 4, TPM_LEFTALIGN | TPM_TOPALIGN); break;
-        default:        showMenu(br.left, br.top - 4, TPM_LEFTALIGN | TPM_BOTTOMALIGN); break;
-        }
+        bool right = m_FracX > 0.5, below = m_FracY > 0.5;
+        int x = right ? br.left : br.right;
+        int y = below ? br.bottom : br.top;
+        showMenu(x, y, (right ? TPM_RIGHTALIGN : TPM_LEFTALIGN) | (below ? TPM_BOTTOMALIGN : TPM_TOPALIGN));
     }
 
     // ---- window procedures ----
@@ -574,7 +558,7 @@ private:
                 ReleaseCapture();
                 self->render();
                 if (dragged) {
-                    self->snap();
+                    self->savePosition();
                 }
                 else {
                     self->openMenuFromButton();
@@ -631,8 +615,8 @@ private:
     SDL_Window* m_Window;
     HWND m_Parent;
     HWND m_Button = nullptr;
-    int m_Edge = EdgeBottom;
-    double m_Pos = 0.0;
+    double m_FracX = 0.02;  // button position as a proportion of the window
+    double m_FracY = 0.97;
     bool m_Visible = true;
     bool m_Hover = false;
     bool m_Pressed = false;
