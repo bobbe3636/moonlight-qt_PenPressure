@@ -94,6 +94,11 @@ public:
     // Returns true if consumed (the message must then not reach DefWindowProc).
     bool handleNativePenMessage(void* hwnd, unsigned int msg, uintptr_t wParam);
 
+    // Native pen input (Windows): forwards mouse buttons the tablet driver synthesizes for
+    // pen side buttons (e.g. Wacom's default middle click), which SDL marks as touch-generated
+    // and we'd otherwise drop. Returns true if consumed.
+    bool handleNativePenMouseButton(unsigned int msg, uintptr_t wParam);
+
     void handleKeyEvent(SDL_KeyboardEvent* event);
 
     void handleMouseButtonEvent(SDL_MouseButtonEvent* event);

@@ -39,6 +39,15 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
             return 0;
         }
         break;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+        if (((SdlInputHandler*)refData)->handleNativePenMouseButton(msg, wParam)) {
+            // WM_XBUTTON* must return TRUE when processed
+            return (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP) ? TRUE : 0;
+        }
+        break;
     case WM_NCDESTROY:
         RemoveWindowSubclass(hwnd, penSubclassProc, subclassId);
         break;
@@ -231,10 +240,40 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
     return true;
 }
 
+bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wParam)
+{
+    // Mouse input synthesized for a pen carries the MI_WP_SIGNATURE in the extra info;
+    // bit 7 set means touch rather than pen. Right clicks are left alone: they come from
+    // barrel + tap, which the host already derives from the pen's barrel flag.
+    LPARAM extraInfo = GetMessageExtraInfo();
+    if ((extraInfo & 0xFFFFFF00) != 0xFF515700 || (extraInfo & 0x80)) {
+        return false;
+    }
+    if (!(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) || !isCaptureActive()) {
+        return false;
+    }
+
+    int button;
+    switch (msg) {
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        button = BUTTON_MIDDLE;
+        break;
+    default:
+        button = GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? BUTTON_X1 : BUTTON_X2;
+        break;
+    }
+
+    bool down = (msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN);
+    LiSendMouseButtonEvent(down ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, button);
+    return true;
+}
+
 #else
 
 void SdlInputHandler::installNativePenHook() {}
 void SdlInputHandler::removeNativePenHook() {}
 bool SdlInputHandler::handleNativePenMessage(void*, unsigned int, uintptr_t) { return false; }
+bool SdlInputHandler::handleNativePenMouseButton(unsigned int, uintptr_t) { return false; }
 
 #endif
