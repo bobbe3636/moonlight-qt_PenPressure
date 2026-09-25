@@ -3,11 +3,9 @@ name: Build
 permissions:
   contents: read
 
+# Upstream's all-platform build; manual only in this fork (build-windows.yml runs on push)
 on:
-  push:
-  pull_request:
-    branches:
-      - master
+  workflow_dispatch:
 
 concurrency:
   group: build-${{ github.ref }}

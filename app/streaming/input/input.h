@@ -90,6 +90,10 @@ public:
 
     void setWindow(SDL_Window* window);
 
+    // Native pen input (Windows): handles a WM_POINTER* message for a pen.
+    // Returns true if consumed (the message must then not reach DefWindowProc).
+    bool handleNativePenMessage(void* hwnd, unsigned int msg, uintptr_t wParam);
+
     void handleKeyEvent(SDL_KeyboardEvent* event);
 
     void handleMouseButtonEvent(SDL_MouseButtonEvent* event);
@@ -184,6 +188,10 @@ private:
 
     void disableTouchFeedback();
 
+    void installNativePenHook();
+
+    void removeNativePenHook();
+
     void handleRelativeFingerEvent(SDL_TouchFingerEvent* event);
 
     void performSpecialKeyCombo(KeyCombo combo);
@@ -242,6 +250,10 @@ private:
     bool m_AbsoluteMouseMode;
     bool m_AbsoluteTouchMode;
     bool m_DisabledTouchFeedback;
+    void* m_NativePenHwnd;
+    bool m_NativePenLogged;
+    float m_LastPenX;
+    float m_LastPenY;
 
     SDL_TouchFingerEvent m_TouchDownEvent[MAX_FINGERS];
     SDL_TimerID m_LeftButtonReleaseTimer;

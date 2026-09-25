@@ -1,0 +1,59 @@
+---
+# Windows x64 build of this fork (native pen input). Same steps as build-win-mac.yml,
+# minus ARM64, macOS and the combined bundle.
+name: Build Windows
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2025
+    env:
+      QT_VERSION: 6.11.2
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Download dependencies
+        run: powershell ./setup-deps.ps1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
+          tools: 'tools_qtcreator_gui'
+          version: ${{ env.QT_VERSION }}
+          aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@073e34d7c2ab4ae6961ed7cca690b3abd5ba5a7e'
+
+      - name: Build x64
+        shell: cmd
+        run: |
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release x64
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ env.QT_VERSION }}\msvc2022_64\bin
+
+      - name: Upload installer and portable build
+        uses: actions/upload-artifact@v6
+        with:
+          name: Moonlight-pen-windows-x64-${{ github.sha }}
+          path: |
+            build/build-x64-release/Moonlight.msi
+            build/installer-release/MoonlightPortable-x64-*.zip
+          if-no-files-found: error
