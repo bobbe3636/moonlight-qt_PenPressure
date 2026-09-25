@@ -50,7 +50,7 @@ enum Command {
 };
 
 constexpr UINT_PTR k_ParentSubclassId = 0x4D4C534D; // 'MLSM'
-constexpr int k_ButtonSizeDip = 40;
+constexpr int k_ButtonSizeDip = 52;  // includes room around the round button for its glow
 const wchar_t* k_ButtonClass = L"MoonlightStreamMenuButton";
 
 // Dark menus on Windows 10 1903+ (undocumented uxtheme ordinals, the same ones Explorer uses)
@@ -172,7 +172,7 @@ private:
             return;
         }
 
-        int s = buttonSize(), m = s / 5;
+        int s = buttonSize(), m = s / 12;  // the canvas already has transparent padding
         RECT rc = clientRectOnScreen();
         int w = rc.right - rc.left, h = rc.bottom - rc.top;
         int x = rc.left + m, y = rc.top + m;
@@ -195,7 +195,7 @@ private:
     {
         RECT br, rc = clientRectOnScreen();
         GetWindowRect(m_Button, &br);
-        int s = buttonSize(), m = s / 5;
+        int s = buttonSize(), m = s / 12;  // the canvas already has transparent padding
         int cx = (br.left + br.right) / 2, cy = (br.top + br.bottom) / 2;
         int d[4] = { cx - rc.left, cy - rc.top, rc.right - cx, rc.bottom - cy };
         m_Edge = (int)(std::min_element(d, d + 4) - d);
@@ -214,7 +214,7 @@ private:
         reposition();
     }
 
-    // ---- drawing: dark rounded tile with the Moonlight logo, per-pixel alpha ----
+    // ---- drawing: round button, Moonlight logo, circular highlight ring (per-pixel alpha) ----
 
     void render()
     {
@@ -226,15 +226,52 @@ private:
         {
             QPainter painter(&image);
             painter.setRenderHint(QPainter::Antialiasing);
-            QPainterPath path;
-            path.addRoundedRect(QRectF(0.5, 0.5, s - 1, s - 1), s * 0.22, s * 0.22);
-            painter.fillPath(path, m_Hover ? QColor(52, 52, 58, 245) : QColor(26, 26, 30, 215));
-            painter.setPen(QPen(QColor(255, 255, 255, m_Hover ? 70 : 35), 1));
-            painter.drawPath(path);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
+            const QPointF c(s / 2.0, s / 2.0);
+            const double r = s * 0.40;              // the button; the rest is room for glow/shadow
+            const QColor accent(110, 160, 255);     // highlight colour
+
+            // Soft drop shadow
+            for (int i = 3; i >= 1; i--) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(0, 0, 0, 22));
+                painter.drawEllipse(c + QPointF(0, s * 0.02), r + i * s * 0.018, r + i * s * 0.018);
+            }
+
+            // Outer glow while hovered
+            if (m_Hover) {
+                for (int i = 4; i >= 1; i--) {
+                    QColor glow = accent;
+                    glow.setAlpha(18 * (5 - i));
+                    painter.setPen(QPen(glow, s * 0.03));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawEllipse(c, r + i * s * 0.02, r + i * s * 0.02);
+                }
+            }
+
+            // Disc: darker when pressed, a touch lighter when hovered
+            QRadialGradient fill(c - QPointF(0, r * 0.4), r * 1.4);
+            int base = m_Pressed ? 14 : (m_Hover ? 40 : 24);
+            fill.setColorAt(0, QColor(base + 18, base + 18, base + 24, 235));
+            fill.setColorAt(1, QColor(base, base, base + 4, 225));
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(fill);
+            painter.drawEllipse(c, r, r);
+
+            // The circular highlight ring
+            QColor ring = m_Hover ? accent : QColor(255, 255, 255, 70);
+            if (m_Pressed) {
+                ring.setAlpha(150);
+            }
+            painter.setPen(QPen(ring, m_Hover ? s * 0.045 : s * 0.03));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(c, r - s * 0.015, r - s * 0.015);
+
+            // Logo, slightly smaller while pressed
             QSvgRenderer logo(QString(":/res/moonlight.svg"));
-            double pad = s * 0.18;
-            logo.render(&painter, QRectF(pad, pad, s - 2 * pad, s - 2 * pad));
+            double half = r * (m_Pressed ? 0.56 : 0.62);
+            logo.render(&painter, QRectF(c.x() - half, c.y() - half, 2 * half, 2 * half));
         }
 
         BITMAPINFO bmi = {};
@@ -449,6 +486,7 @@ private:
             self->m_Dragging = false;
             GetCursorPos(&self->m_PressCursor);
             GetWindowRect(hwnd, &self->m_PressRect);
+            self->render();
             return 0;
 
         case WM_MOUSEMOVE:
@@ -485,6 +523,7 @@ private:
                 bool dragged = self->m_Dragging;
                 self->m_Pressed = self->m_Dragging = false;
                 ReleaseCapture();
+                self->render();
                 if (dragged) {
                     self->snap();
                 }
@@ -499,7 +538,10 @@ private:
             return 0;
 
         case WM_CAPTURECHANGED:
-            self->m_Pressed = false;
+            if (self->m_Pressed) {
+                self->m_Pressed = false;
+                self->render();
+            }
             return 0;
 
         case WM_NCDESTROY:
