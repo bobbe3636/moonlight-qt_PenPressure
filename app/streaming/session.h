@@ -4,6 +4,8 @@
 #include <QQuickWindow>
 #include <QProcess>
 
+#include <atomic>
+
 #include <Limelight.h>
 #include <opus_multistream.h>
 #include "settings/streamingpreferences.h"
@@ -127,9 +129,36 @@ public:
     // Extra host screens (Apollo "Extra screens"): one companion Moonlight window per screen
     void startCompanionScreens();
 
+    void startCompanionScreen(int screen);
+
     void stopCompanionScreens();
 
+public:
+    // ---- Stream menu (the floating button's menu) ----
+    void toggleStreamMenu();
+    void runShortcutCommand(char letter);
+    bool isFullScreen();
+    bool isStatsOverlayVisible();
+    bool isImmersive();
+    void toggleImmersive();
+    bool isAudioMuted() const { return m_UserAudioMuted; }
+    void setAudioMuted(bool muted) { m_UserAudioMuted = muted; }
+    int extraScreenCount() const;
+    void setExtraScreenCount(int count);
+    bool isCompanion() const { return m_IsCompanion; }
+    void setCompanion(bool companion) { m_IsCompanion = companion; }
+    int streamWidth() const { return m_StreamConfig.width; }
+    int streamHeight() const { return m_StreamConfig.height; }
+    void reconnectWithResolution(int width, int height);
+    void sendCtrlAltDel();
+
     void setShouldExit(bool quitHostApp = false);
+
+private:
+    class StreamMenu* m_StreamMenu = nullptr;
+    std::atomic<bool> m_UserAudioMuted { false };  // muted from the stream menu (independent of focus muting)
+    bool m_IsCompanion = false;
+    QStringList m_RelaunchArgs;
 
 signals:
     void stageStarting(QString stage);

@@ -156,6 +156,8 @@ public:
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(int extraScreens MEMBER extraScreens NOTIFY extraScreensChanged)
+    Q_PROPERTY(bool immersiveMode MEMBER immersiveMode NOTIFY immersiveModeChanged)
+    Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
@@ -190,6 +192,8 @@ public:
     bool swapFaceButtons;
     bool keepAwake;
     int extraScreens; // 0..2 companion windows for hosts with Apollo extra screens
+    bool immersiveMode; // capture mouse/keyboard in the stream window (off: the mouse moves freely in and out)
+    bool showStreamMenuButton;
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
@@ -239,6 +243,8 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void extraScreensChanged();
+    void immersiveModeChanged();
+    void showStreamMenuButtonChanged();
     void languageChanged();
     void rendererSelectionChanged();
 

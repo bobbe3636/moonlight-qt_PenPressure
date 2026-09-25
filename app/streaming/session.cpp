@@ -1,4 +1,5 @@
 #include "session.h"
+#include "streammenu.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
@@ -1306,6 +1307,12 @@ private:
             emit m_Session->sessionFinished(m_Session->m_PortTestResults);
         }
 
+        // Reconnect requested from the stream menu (e.g. a new resolution): the previous
+        // connection is fully stopped, so the host sees a clean new session
+        if (!m_Session->m_RelaunchArgs.isEmpty()) {
+            QProcess::startDetached(QCoreApplication::applicationFilePath(), m_Session->m_RelaunchArgs);
+        }
+
         // Exit the entire program if requested
         if (m_Session->m_ShouldExit) {
             QCoreApplication::instance()->quit();
@@ -1756,10 +1763,11 @@ void Session::start()
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
-    // With extra screens the cursor has to be able to leave this window for the others,
-    // so use absolute (remote desktop) mouse mode for this session without changing the setting.
+    // Outside immersive mode (the default) the mouse moves freely in and out of the window, and
+    // with extra screens it has to reach the other screens' windows: use absolute (remote
+    // desktop) mouse mode for this session without changing the saved mouse setting.
     bool savedAbsoluteMouseMode = m_Preferences->absoluteMouseMode;
-    if (m_Preferences->extraScreens > 0) {
+    if (!m_Preferences->immersiveMode || m_Preferences->extraScreens > 0) {
         m_Preferences->absoluteMouseMode = true;
     }
     m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
@@ -1888,6 +1896,11 @@ void Session::exec()
     }
 
     m_InputHandler->setWindow(m_Window);
+
+    // The floating menu button (main window only; the extra screens' windows are plain streams)
+    if (!m_IsCompanion) {
+        m_StreamMenu = streamMenuCreate(this, m_Window);
+    }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
@@ -2375,6 +2388,9 @@ DispatchDeferredCleanup:
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window
+    streamMenuDestroy(m_StreamMenu);
+    m_StreamMenu = nullptr;
+
     SDL_DestroyWindow(m_Window);
 
     if (iconSurface != nullptr) {
@@ -2394,11 +2410,14 @@ DispatchDeferredCleanup:
 
 void Session::startCompanionScreens()
 {
-    int count = m_Preferences->extraScreens;
-    if (count <= 0) {
-        return;
+    int count = m_IsCompanion ? 0 : m_Preferences->extraScreens;
+    for (int n = 1; n <= count; n++) {
+        startCompanionScreen(n + 1);
     }
+}
 
+void Session::startCompanionScreen(int screen)
+{
     QString uuid, address;
     uint16_t httpPort, httpsPort;
     {
@@ -2409,21 +2428,116 @@ void Session::startCompanionScreens()
         httpsPort = m_Computer->activeHttpsPort ? m_Computer->activeHttpsPort : DEFAULT_HTTPS_PORT;
     }
 
-    // Apollo's extra screen N+1 listens on the main ports + 1000 * N
-    for (int n = 1; n <= count; n++) {
-        QStringList args {
-            "stream", uuid, m_App.name,
-            "--companion-screen", QString::number(n + 1),
-            "--companion-address", address,
-            "--companion-http-port", QString::number(httpPort + 1000 * n),
-            "--companion-https-port", QString::number(httpsPort + 1000 * n),
-        };
-        auto process = new QProcess();
-        process->start(QCoreApplication::applicationFilePath(), args);
-        m_CompanionProcesses.append(process);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Started companion window for screen %d (port %d)",
-                    n + 1, httpPort + 1000 * n);
+    // Apollo's extra screen N listens on the main ports + 1000 * (N - 1)
+    int offset = 1000 * (screen - 1);
+    QStringList args {
+        "stream", uuid, m_App.name,
+        "--companion-screen", QString::number(screen),
+        "--companion-address", address,
+        "--companion-http-port", QString::number(httpPort + offset),
+        "--companion-https-port", QString::number(httpsPort + offset),
+    };
+    auto process = new QProcess();
+    process->start(QCoreApplication::applicationFilePath(), args);
+    m_CompanionProcesses.append(process);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Started companion window for screen %d (port %d)",
+                screen, httpPort + offset);
+}
+
+// ---- Stream menu ----
+
+void Session::toggleStreamMenu()
+{
+#ifdef Q_OS_WIN32
+    if (m_StreamMenu != nullptr) {
+        streamMenuToggle(m_StreamMenu);
     }
+#endif
+}
+
+void Session::runShortcutCommand(char letter)
+{
+    if (m_InputHandler != nullptr) {
+        m_InputHandler->runShortcutCommand(letter);
+    }
+}
+
+bool Session::isFullScreen()
+{
+    return m_Window != nullptr && (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN);
+}
+
+bool Session::isStatsOverlayVisible()
+{
+    return m_OverlayManager.isOverlayEnabled(Overlay::OverlayDebug);
+}
+
+bool Session::isImmersive()
+{
+    return m_InputHandler != nullptr && !m_InputHandler->isAbsoluteMouseMode();
+}
+
+void Session::toggleImmersive()
+{
+    // Ctrl+Alt+Shift+M switches between captured (relative) and free (absolute) mouse
+    runShortcutCommand('M');
+    m_Preferences->immersiveMode = isImmersive();
+    m_Preferences->absoluteMouseMode = !m_Preferences->immersiveMode;
+    m_Preferences->save();
+}
+
+int Session::extraScreenCount() const
+{
+    return m_CompanionProcesses.size();
+}
+
+void Session::setExtraScreenCount(int count)
+{
+    count = qBound(0, count, 2);
+    m_Preferences->extraScreens = count;
+    m_Preferences->save();
+
+    // Close screens above the new count, open the missing ones (screens 2, 3 in order)
+    while (m_CompanionProcesses.size() > count) {
+        QProcess* process = m_CompanionProcesses.takeLast();
+        process->kill();
+        process->waitForFinished(3000);
+        delete process;
+    }
+    while (m_CompanionProcesses.size() < count) {
+        startCompanionScreen(m_CompanionProcesses.size() + 2);
+    }
+}
+
+void Session::reconnectWithResolution(int width, int height)
+{
+    // The host builds its (virtual) display at the resolution we connect with, so a new
+    // resolution means a new connection: save it, end this stream without quitting the host
+    // app, and start the same app again once this session is cleaned up.
+    m_Preferences->width = width;
+    m_Preferences->height = height;
+    m_Preferences->save();
+
+    {
+        QReadLocker lock(&m_Computer->lock);
+        m_RelaunchArgs = QStringList { "stream", m_Computer->uuid, m_App.name };
+    }
+    setShouldExit(false);
+
+    SDL_Event event;
+    event.type = SDL_QUIT;
+    event.quit.timestamp = SDL_GetTicks();
+    SDL_PushEvent(&event);
+}
+
+void Session::sendCtrlAltDel()
+{
+    LiSendKeyboardEvent2(0x8000 | 0xA2, KEY_ACTION_DOWN, MODIFIER_CTRL, 0);                    // left Ctrl
+    LiSendKeyboardEvent2(0x8000 | 0xA4, KEY_ACTION_DOWN, MODIFIER_CTRL | MODIFIER_ALT, 0);     // left Alt
+    LiSendKeyboardEvent2(0x8000 | 0x2E, KEY_ACTION_DOWN, MODIFIER_CTRL | MODIFIER_ALT, 0);     // Delete
+    LiSendKeyboardEvent2(0x8000 | 0x2E, KEY_ACTION_UP, MODIFIER_CTRL | MODIFIER_ALT, 0);
+    LiSendKeyboardEvent2(0x8000 | 0xA4, KEY_ACTION_UP, MODIFIER_CTRL, 0);
+    LiSendKeyboardEvent2(0x8000 | 0xA2, KEY_ACTION_UP, 0, 0);
 }
 
 void Session::stopCompanionScreens()

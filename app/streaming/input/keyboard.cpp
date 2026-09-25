@@ -168,8 +168,24 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         updateKeyboardGrabState();
         break;
 
+    case KeyComboToggleStreamMenu:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected stream menu toggle combo");
+        Session::get()->toggleStreamMenu();
+        break;
+
     default:
         Q_UNREACHABLE();
+    }
+}
+
+void SdlInputHandler::runShortcutCommand(char letter)
+{
+    for (int i = 0; i < KeyComboMax; i++) {
+        if (m_SpecialKeyCombos[i].enabled && m_SpecialKeyCombos[i].keyCode == SDLK_a + (letter - 'A')) {
+            performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
+            return;
+        }
     }
 }
 

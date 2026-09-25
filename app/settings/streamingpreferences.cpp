@@ -51,6 +51,8 @@
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_EXTRASCREENS "extrascreens"
+#define SER_IMMERSIVEMODE "immersivemode"
+#define SER_STREAMMENUBUTTON "streammenubutton"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -153,6 +155,8 @@ void StreamingPreferences::reload()
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
     keepAwake = settings.value(SER_KEEPAWAKE, true).toBool();
     extraScreens = qBound(0, settings.value(SER_EXTRASCREENS, 0).toInt(), 2);
+    immersiveMode = settings.value(SER_IMMERSIVEMODE, false).toBool();
+    showStreamMenuButton = settings.value(SER_STREAMMENUBUTTON, true).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
@@ -365,6 +369,8 @@ void StreamingPreferences::save()
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
     settings.setValue(SER_EXTRASCREENS, extraScreens);
+    settings.setValue(SER_IMMERSIVEMODE, immersiveMode);
+    settings.setValue(SER_STREAMMENUBUTTON, showStreamMenuButton);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

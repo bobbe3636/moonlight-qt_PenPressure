@@ -187,6 +187,7 @@ SOURCES += \
     settings/streamingpreferences.cpp \
     streaming/input/abstouch.cpp \
     streaming/input/pen.cpp \
+    streaming/streammenu.cpp \
     streaming/input/gamepad.cpp \
     streaming/input/input.cpp \
     streaming/input/keyboard.cpp \
@@ -230,6 +231,7 @@ HEADERS += \
     settings/streamingpreferences.h \
     streaming/input/input.h \
     streaming/session.h \
+    streaming/streammenu.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
     gui/computermodel.h \

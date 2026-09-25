@@ -231,6 +231,7 @@ public:
         m_State = StateStartSession;
         NvApp app = m_Computer->appList[index];
         Session* session = new Session(m_Computer, app, m_Preferences);
+        session->setCompanion(true);
         emit q->sessionCreated(app.name, session);
     }
 

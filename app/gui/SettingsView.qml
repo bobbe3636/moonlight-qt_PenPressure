@@ -1361,6 +1361,43 @@ Flickable {
                 spacing: 5
 
                 CheckBox {
+                    id: immersiveModeCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    text: qsTr("Immersive mode (capture mouse and keyboard in the stream)")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.immersiveMode
+                    onCheckedChanged: {
+                        StreamingPreferences.immersiveMode = checked
+                        // Immersive = the classic game-style captured mouse
+                        StreamingPreferences.absoluteMouseMode = !checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Off (default): the mouse moves freely in and out of the stream window, like any other window. On: the stream captures the mouse and keyboard, best for games.") + " " +
+                                  qsTr("You can toggle this while streaming from the stream menu or with Ctrl+Alt+Shift+M.")
+                }
+
+                CheckBox {
+                    id: streamMenuButtonCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    text: qsTr("Show the stream menu button")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.showStreamMenuButton
+                    onCheckedChanged: {
+                        StreamingPreferences.showStreamMenuButton = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("A small Moonlight button on the stream window with every in-stream command. Drag it to any edge. Show or hide it while streaming with Ctrl+Alt+Shift+B.")
+                }
+
+                CheckBox {
                     id: absoluteMouseCheck
                     hoverEnabled: true
                     width: parent.width

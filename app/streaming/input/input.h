@@ -151,6 +151,11 @@ public:
 
     bool isCaptureActive();
 
+    // Stream menu: run one of the Ctrl+Alt+Shift commands by its letter (e.g. 'X')
+    void runShortcutCommand(char letter);
+
+    bool isAbsoluteMouseMode() const { return m_AbsoluteMouseMode; }
+
     bool isSystemKeyCaptureActive();
 
     void setCaptureActive(bool active);
@@ -177,6 +182,7 @@ private:
         KeyComboTogglePointerRegionLock,
         KeyComboQuitAndExit,
         KeyComboToggleKeyboardGrab,
+        KeyComboToggleStreamMenu,
         KeyComboMax
     };
 
