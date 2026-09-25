@@ -24,6 +24,10 @@ public:
                       StreamingPreferences* preferences,
                       QObject *parent = nullptr);
     ~Launcher();
+
+    // Stream one of the host's extra screens instead (see StreamCommandLineParser)
+    void setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort);
+
     Q_INVOKABLE void execute(ComputerManager *manager);
     Q_INVOKABLE void quitRunningApp();
     Q_INVOKABLE bool isExecuted() const;

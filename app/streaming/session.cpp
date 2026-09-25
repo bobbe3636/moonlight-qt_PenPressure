@@ -1756,7 +1756,14 @@ void Session::start()
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
+    // With extra screens the cursor has to be able to leave this window for the others,
+    // so use absolute (remote desktop) mouse mode for this session without changing the setting.
+    bool savedAbsoluteMouseMode = m_Preferences->absoluteMouseMode;
+    if (m_Preferences->extraScreens > 0) {
+        m_Preferences->absoluteMouseMode = true;
+    }
     m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
+    m_Preferences->absoluteMouseMode = savedAbsoluteMouseMode;
 
     // Kick off the async connection thread then return to the caller to pump the event loop
     auto thread = new AsyncConnectionStartThread(this);
@@ -1787,6 +1794,9 @@ void Session::exec()
         QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
         return;
     }
+
+    // Our own connection is up: open a window for each of the host's extra screens
+    startCompanionScreens();
 
     // Pump the Qt event loop one last time before we create our SDL window
     // This is sometimes necessary for the QML code to process any signals
@@ -1871,6 +1881,7 @@ void Session::exec()
             delete m_InputHandler;
             m_InputHandler = nullptr;
             SDL_QuitSubSystem(SDL_INIT_VIDEO);
+            stopCompanionScreens();
             QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
             return;
         }
@@ -2372,8 +2383,55 @@ DispatchDeferredCleanup:
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 
+    // The extra screens' windows close with the main stream
+    stopCompanionScreens();
+
     // Cleanup can take a while, so dispatch it to a worker thread.
     // When it is complete, it will release our s_ActiveSessionSemaphore
     // reference.
     QThreadPool::globalInstance()->start(new DeferredSessionCleanupTask(this));
+}
+
+void Session::startCompanionScreens()
+{
+    int count = m_Preferences->extraScreens;
+    if (count <= 0) {
+        return;
+    }
+
+    QString uuid, address;
+    uint16_t httpPort, httpsPort;
+    {
+        QReadLocker lock(&m_Computer->lock);
+        uuid = m_Computer->uuid;
+        address = m_Computer->activeAddress.address();
+        httpPort = m_Computer->activeAddress.port() ? m_Computer->activeAddress.port() : DEFAULT_HTTP_PORT;
+        httpsPort = m_Computer->activeHttpsPort ? m_Computer->activeHttpsPort : DEFAULT_HTTPS_PORT;
+    }
+
+    // Apollo's extra screen N+1 listens on the main ports + 1000 * N
+    for (int n = 1; n <= count; n++) {
+        QStringList args {
+            "stream", uuid, m_App.name,
+            "--companion-screen", QString::number(n + 1),
+            "--companion-address", address,
+            "--companion-http-port", QString::number(httpPort + 1000 * n),
+            "--companion-https-port", QString::number(httpsPort + 1000 * n),
+        };
+        auto process = new QProcess();
+        process->start(QCoreApplication::applicationFilePath(), args);
+        m_CompanionProcesses.append(process);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Started companion window for screen %d (port %d)",
+                    n + 1, httpPort + 1000 * n);
+    }
+}
+
+void Session::stopCompanionScreens()
+{
+    for (QProcess* process : std::as_const(m_CompanionProcesses)) {
+        process->kill();
+        process->waitForFinished(3000);
+        delete process;
+    }
+    m_CompanionProcesses.clear();
 }

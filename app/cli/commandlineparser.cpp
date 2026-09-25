@@ -372,11 +372,32 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addChoiceOption("video-codec", "video codec", m_VideoCodecMap.keys());
     parser.addChoiceOption("video-decoder", "video decoder", m_VideoDecoderMap.keys());
 
+    // Internal: a companion window for one of the host's extra screens (started by Moonlight
+    // itself; see Session). <host> is then the main host's UUID.
+    for (const char* name : {"companion-screen", "companion-address", "companion-http-port", "companion-https-port"}) {
+        QCommandLineOption option(name, name, "value");
+        option.setFlags(QCommandLineOption::HiddenFromHelp);
+        parser.addOption(option);
+    }
+
     if (!parser.parse(args)) {
         parser.showError(parser.errorText());
     }
 
     parser.handleUnknownOptions();
+
+    if (parser.isSet("companion-screen")) {
+        m_CompanionScreen = parser.value("companion-screen").toInt();
+        m_CompanionAddress = parser.value("companion-address");
+        m_CompanionHttpPort = parser.value("companion-http-port").toUShort();
+        m_CompanionHttpsPort = parser.value("companion-https-port").toUShort();
+
+        // A companion is always its own window, never spawns companions itself, and uses
+        // absolute mouse so the cursor can move between the screens' windows
+        preferences->windowMode = StreamingPreferences::WM_WINDOWED;
+        preferences->absoluteMouseMode = true;
+        preferences->extraScreens = 0;
+    }
 
     // Resolve display's width and height
     static QRegularExpression resolutionRexExp("^(720|1080|1440|4K|resolution)$");
@@ -531,6 +552,26 @@ QString StreamCommandLineParser::getHost() const
 QString StreamCommandLineParser::getAppName() const
 {
     return m_AppName;
+}
+
+int StreamCommandLineParser::getCompanionScreen() const
+{
+    return m_CompanionScreen;
+}
+
+QString StreamCommandLineParser::getCompanionAddress() const
+{
+    return m_CompanionAddress;
+}
+
+uint16_t StreamCommandLineParser::getCompanionHttpPort() const
+{
+    return m_CompanionHttpPort;
+}
+
+uint16_t StreamCommandLineParser::getCompanionHttpsPort() const
+{
+    return m_CompanionHttpsPort;
 }
 
 ListCommandLineParser::ListCommandLineParser()

@@ -64,9 +64,19 @@ public:
     QString getHost() const;
     QString getAppName() const;
 
+    // Companion window for an extra host screen (0 = a normal stream)
+    int getCompanionScreen() const;
+    QString getCompanionAddress() const;
+    uint16_t getCompanionHttpPort() const;
+    uint16_t getCompanionHttpsPort() const;
+
 private:
     QString m_Host;
     QString m_AppName;
+    int m_CompanionScreen = 0;
+    QString m_CompanionAddress;
+    uint16_t m_CompanionHttpPort = 0;
+    uint16_t m_CompanionHttpsPort = 0;
     QMap<QString, StreamingPreferences::WindowMode> m_WindowModeMap;
     QMap<QString, StreamingPreferences::AudioConfig> m_AudioConfigMap;
     QMap<QString, StreamingPreferences::VideoCodecConfig> m_VideoCodecMap;

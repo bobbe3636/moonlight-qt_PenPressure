@@ -933,6 +933,38 @@ Flickable {
                 }
 
 
+                Label {
+                    width: parent.width
+                    id: extraScreensTitle
+                    text: qsTr("Screens")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                }
+
+                AutoResizingComboBox {
+                    // ignore setting the index at first, and actually set it when the component is loaded
+                    Component.onCompleted: {
+                        currentIndex = Math.max(0, Math.min(2, StreamingPreferences.extraScreens))
+                    }
+
+                    id: extraScreensComboBox
+                    textRole: "text"
+                    model: ListModel {
+                        ListElement { text: qsTr("1 screen") }
+                        ListElement { text: qsTr("2 screens (host needs Apollo extra screens)") }
+                        ListElement { text: qsTr("3 screens (host needs Apollo extra screens)") }
+                    }
+                    // ::onActivated must be used, as it only listens for when the index is changed by a human
+                    onActivated : {
+                        StreamingPreferences.extraScreens = currentIndex
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Opens an extra window for each additional host screen when you start a stream. The host must run Apollo with \"Extra screens\" set to at least the same number.")
+                }
+
                 CheckBox {
                     id: audioPcCheck
                     width: parent.width

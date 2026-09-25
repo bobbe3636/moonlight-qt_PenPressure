@@ -1000,6 +1000,10 @@ int main(int argc, char *argv[])
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
+            if (streamParser.getCompanionScreen() > 0) {
+                launcher->setCompanion(streamParser.getCompanionScreen(), streamParser.getCompanionAddress(),
+                                       streamParser.getCompanionHttpPort(), streamParser.getCompanionHttpsPort());
+            }
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
         }

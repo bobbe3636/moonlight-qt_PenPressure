@@ -2,8 +2,12 @@
 #include "backend/computermanager.h"
 #include "backend/computerseeker.h"
 #include "streaming/session.h"
+#include "backend/nvhttp.h"
 
 #include <QCoreApplication>
+#include <QPointer>
+#include <QReadLocker>
+#include <QThread>
 #include <QTimer>
 
 #define COMPUTER_SEEK_TIMEOUT 30000
@@ -57,7 +61,11 @@ public:
         switch (event.type) {
         // Occurs when CliStartStreamSegue becomes visible and the UI calls launcher's execute()
         case Event::Executed:
-            if (m_State == StateInit) {
+            if (m_State == StateInit && m_CompanionScreen > 0) {
+                m_ComputerManager = event.computerManager;
+                startCompanion();
+            }
+            else if (m_State == StateInit) {
                 m_State = StateSeekComputer;
                 m_ComputerManager = event.computerManager;
 
@@ -140,6 +148,92 @@ public:
         }
     }
 
+    // A companion window for one of the host's extra screens (Apollo "Extra screens"): the extra
+    // screen is the same Apollo installation on another port, so it presents the main host's
+    // certificate and trusts the devices paired with it. Connect directly, no pairing needed.
+    void startCompanion()
+    {
+        Q_Q(Launcher);
+        m_State = StateSeekComputer;
+        emit q->searchingComputer();
+
+        QSslCertificate serverCert;
+        const auto computers = m_ComputerManager->getComputers();
+        for (NvComputer* computer : computers) {
+            QReadLocker lock(&computer->lock);
+            if (computer->uuid == m_ComputerName) {
+                serverCert = computer->serverCert;
+                break;
+            }
+        }
+        if (serverCert.isNull()) {
+            m_State = StateFailure;
+            emit q->failed(QObject::tr("Screen %1: the host is not paired with this PC.").arg(m_CompanionScreen));
+            return;
+        }
+
+        QString address = m_CompanionAddress;
+        uint16_t httpPort = m_CompanionHttpPort;
+        uint16_t httpsPort = m_CompanionHttpsPort;
+        int screen = m_CompanionScreen;
+        QPointer<Launcher> launcher(q);
+
+        // NvHTTP blocks, so talk to the extra screen off the UI thread
+        QThread* thread = QThread::create([=]() {
+            NvComputer* computer = nullptr;
+            QString error;
+            try {
+                NvHTTP http(NvAddress(address, httpPort), httpsPort, serverCert, true);
+                QString serverInfo = http.getServerInfo(NvHTTP::NVLL_ERROR);
+                computer = new NvComputer(http, serverInfo);
+                if (computer->pairState != NvComputer::PS_PAIRED) {
+                    error = QObject::tr("Screen %1 doesn't trust this PC yet. Is \"Extra screens\" set in the host's Apollo, "
+                                        "and was this PC paired with the main screen?").arg(screen);
+                }
+                else {
+                    computer->appList = http.getAppList();
+                }
+            } catch (const std::exception& e) {
+                error = QObject::tr("Screen %1: can't reach the host's extra screen on port %2 (%3). "
+                                    "Set \"Extra screens\" in the host's Apollo settings.")
+                            .arg(screen).arg(httpPort).arg(QString::fromUtf8(e.what()));
+            }
+
+            if (launcher) {
+                QMetaObject::invokeMethod(launcher.data(), [=]() {
+                    if (launcher) {
+                        launcher->d_func()->onCompanionReady(computer, error);
+                    }
+                }, Qt::QueuedConnection);
+            }
+        });
+        q->connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+        thread->start();
+    }
+
+    void onCompanionReady(NvComputer* computer, QString error)
+    {
+        Q_Q(Launcher);
+        if (!error.isEmpty() || computer == nullptr) {
+            m_State = StateFailure;
+            emit q->failed(error);
+            return;
+        }
+
+        m_Computer = computer;
+        int index = getAppIndex();
+        if (index < 0) {
+            m_State = StateFailure;
+            emit q->failed(QObject::tr("Screen %1: app %2 not found on the host.").arg(m_CompanionScreen).arg(m_AppName));
+            return;
+        }
+
+        m_State = StateStartSession;
+        NvApp app = m_Computer->appList[index];
+        Session* session = new Session(m_Computer, app, m_Preferences);
+        emit q->sessionCreated(app.name, session);
+    }
+
     int getAppIndex() const
     {
         for (int i = 0; i < m_Computer->appList.length(); i++) {
@@ -173,6 +267,10 @@ public:
     Launcher *q_ptr;
     QString m_ComputerName;
     QString m_AppName;
+    int m_CompanionScreen = 0;
+    QString m_CompanionAddress;
+    uint16_t m_CompanionHttpPort = 0;
+    uint16_t m_CompanionHttpsPort = 0;
     StreamingPreferences *m_Preferences;
     ComputerManager *m_ComputerManager;
     ComputerSeeker *m_ComputerSeeker;
@@ -199,6 +297,15 @@ Launcher::Launcher(QString computer, QString app,
 
 Launcher::~Launcher()
 {
+}
+
+void Launcher::setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort)
+{
+    Q_D(Launcher);
+    d->m_CompanionScreen = screen;
+    d->m_CompanionAddress = address;
+    d->m_CompanionHttpPort = httpPort;
+    d->m_CompanionHttpsPort = httpsPort;
 }
 
 void Launcher::execute(ComputerManager *manager)

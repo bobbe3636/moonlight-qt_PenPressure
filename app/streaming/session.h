@@ -2,6 +2,7 @@
 
 #include <QSemaphore>
 #include <QQuickWindow>
+#include <QProcess>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
@@ -122,6 +123,11 @@ public:
     }
 
     void flushWindowEvents();
+
+    // Extra host screens (Apollo "Extra screens"): one companion Moonlight window per screen
+    void startCompanionScreens();
+
+    void stopCompanionScreens();
 
     void setShouldExit(bool quitHostApp = false);
 
@@ -251,6 +257,7 @@ private:
     AUDIO_RENDERER_CALLBACKS m_AudioCallbacks;
     NvComputer* m_Computer;
     NvApp m_App;
+    QList<QProcess*> m_CompanionProcesses;
     SDL_Window* m_Window;
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
