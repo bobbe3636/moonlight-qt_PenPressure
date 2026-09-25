@@ -39,7 +39,7 @@ static constexpr double k_Pi = 3.14159265358979323846;
 // position, tilt and timing still come from WM_POINTER.
 //
 // Report 0x10: [0] id, [1] flags (tip, barrel1, barrel2, eraser, invert, in range, ...),
-// [2..4] X, [5..7] Y, [8..9] pressure (0..8191).
+// [2..4] X, [5..7] Y, [8..9] pressure (0..8191), [10..11] tilt, [16] hover distance (0..63).
 
 struct WacomRawReader
 {
@@ -48,6 +48,7 @@ struct WacomRawReader
     std::atomic<bool> stop { false };
     std::atomic<uint8_t> flags { 0 };
     std::atomic<uint16_t> pressure { 0 };
+    std::atomic<uint8_t> distance { 0 };
     std::atomic<uint64_t> lastReportMs { 0 };
     std::atomic<bool> seenReport { false };
     std::atomic<bool> exited { false };
@@ -55,6 +56,7 @@ struct WacomRawReader
     static constexpr uint8_t k_FlagBarrel1 = 0x02;
     static constexpr uint8_t k_FlagBarrel2 = 0x04;
     static constexpr float k_MaxPressure = 8191.0f;
+    static constexpr float k_MaxDistance = 63.0f;
 
     // Only trust raw state that is current
     bool fresh() const
@@ -82,6 +84,9 @@ struct WacomRawReader
 
             flags = report[1];
             pressure = (uint16_t)(report[8] | (report[9] << 8));
+            if (n >= 17) {
+                distance = report[16];
+            }
             lastReportMs = GetTickCount64();
             if (!seenReport) {
                 seenReport = true;
@@ -367,6 +372,11 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
                 if (rawPressure > 0) {
                     pressureOrDistance = qMin(rawPressure / WacomRawReader::k_MaxPressure, 1.0f);
                 }
+            }
+            else if (eventType == LI_TOUCH_EVENT_HOVER) {
+                // Hover height: 1.0 = farthest the tablet senses; 0.0 would mean "unknown"
+                uint8_t rawDistance = qMax<uint8_t>(raw->distance, 1);
+                pressureOrDistance = qMin(rawDistance / WacomRawReader::k_MaxDistance, 1.0f);
             }
         }
 
