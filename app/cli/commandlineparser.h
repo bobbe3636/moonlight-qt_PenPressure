@@ -69,6 +69,7 @@ public:
     QString getCompanionAddress() const;
     uint16_t getCompanionHttpPort() const;
     uint16_t getCompanionHttpsPort() const;
+    quintptr getCompanionParentWindow() const;
 
 private:
     QString m_Host;
@@ -77,6 +78,7 @@ private:
     QString m_CompanionAddress;
     uint16_t m_CompanionHttpPort = 0;
     uint16_t m_CompanionHttpsPort = 0;
+    quintptr m_CompanionParentWindow = 0;
     QMap<QString, StreamingPreferences::WindowMode> m_WindowModeMap;
     QMap<QString, StreamingPreferences::AudioConfig> m_AudioConfigMap;
     QMap<QString, StreamingPreferences::VideoCodecConfig> m_VideoCodecMap;

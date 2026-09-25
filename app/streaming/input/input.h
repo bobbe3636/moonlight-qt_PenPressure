@@ -156,6 +156,10 @@ public:
 
     bool isAbsoluteMouseMode() const { return m_AbsoluteMouseMode; }
 
+    bool isLocalCursorVisible() const { return m_MouseCursorCapturedVisibilityState == SDL_ENABLE; }
+
+    bool isPointerRegionLockActive() const { return m_PointerRegionLockActive; }
+
     bool isSystemKeyCaptureActive();
 
     void setCaptureActive(bool active);

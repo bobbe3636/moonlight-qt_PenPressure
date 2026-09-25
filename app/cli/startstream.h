@@ -26,7 +26,7 @@ public:
     ~Launcher();
 
     // Stream one of the host's extra screens instead (see StreamCommandLineParser)
-    void setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort);
+    void setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort, quintptr parentWindow);
 
     Q_INVOKABLE void execute(ComputerManager *manager);
     Q_INVOKABLE void quitRunningApp();

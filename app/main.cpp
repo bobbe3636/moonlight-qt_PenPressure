@@ -1002,7 +1002,8 @@ int main(int argc, char *argv[])
             auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
             if (streamParser.getCompanionScreen() > 0) {
                 launcher->setCompanion(streamParser.getCompanionScreen(), streamParser.getCompanionAddress(),
-                                       streamParser.getCompanionHttpPort(), streamParser.getCompanionHttpsPort());
+                                       streamParser.getCompanionHttpPort(), streamParser.getCompanionHttpsPort(),
+                                       streamParser.getCompanionParentWindow());
             }
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;

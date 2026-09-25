@@ -6,6 +6,7 @@
 
 #include <Limelight.h>
 #include "SDL_compat.h"
+#include <SDL_syswm.h>
 #include "utils.h"
 
 #ifdef HAVE_FFMPEG
@@ -1803,9 +1804,6 @@ void Session::exec()
         return;
     }
 
-    // Our own connection is up: open a window for each of the host's extra screens
-    startCompanionScreens();
-
     // Pump the Qt event loop one last time before we create our SDL window
     // This is sometimes necessary for the QML code to process any signals
     // we've emitted from the async connection thread.
@@ -1897,9 +1895,16 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
-    // The floating menu button (main window only; the extra screens' windows are plain streams)
-    if (!m_IsCompanion) {
-        m_StreamMenu = streamMenuCreate(this, m_Window);
+    // The floating menu button, on every screen's window
+    m_StreamMenu = streamMenuCreate(this, m_Window);
+
+    // Our connection and window are up: open a window for each of the host's extra screens
+    startCompanionScreens();
+
+    // Outside immersive mode, a click on an inactive stream window both activates it and
+    // reaches the host (no "click once to wake it up"), which matters with several windows
+    if (!m_Preferences->immersiveMode || m_IsCompanion) {
+        SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
     }
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
@@ -2091,6 +2096,13 @@ void Session::exec()
             if (needsFirstEnterCapture && event.window.event == SDL_WINDOWEVENT_ENTER) {
                 m_InputHandler->setCaptureActive(true);
                 needsFirstEnterCapture = false;
+            }
+            // Outside immersive mode (free mouse), moving onto a stream window is enough to
+            // control that screen, focused or not: no click needed to "enter" it first
+            else if (event.window.event == SDL_WINDOWEVENT_ENTER &&
+                     m_InputHandler->isAbsoluteMouseMode() &&
+                     !m_InputHandler->isCaptureActive()) {
+                m_InputHandler->setCaptureActive(true);
             }
 
             // We want to recreate the decoder for resizes (full-screen toggles) and the initial shown event.
@@ -2437,6 +2449,17 @@ void Session::startCompanionScreen(int screen)
         "--companion-http-port", QString::number(httpPort + offset),
         "--companion-https-port", QString::number(httpsPort + offset),
     };
+
+#ifdef Q_OS_WIN32
+    // The companion's menu forwards stream-wide commands (screens, resolution, disconnect...)
+    // to this window
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (m_Window != nullptr && SDL_GetWindowWMInfo(m_Window, &info) && info.subsystem == SDL_SYSWM_WINDOWS) {
+        args << "--companion-parent-window" << QString::number((quintptr)info.info.win.window);
+    }
+#endif
+
     auto process = new QProcess();
     process->start(QCoreApplication::applicationFilePath(), args);
     m_CompanionProcesses.append(process);

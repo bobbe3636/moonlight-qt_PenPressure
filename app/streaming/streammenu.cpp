@@ -84,12 +84,17 @@ class StreamMenu
 {
 public:
     StreamMenu(Session* session, SDL_Window* window, HWND parent)
-        : m_Session(session), m_Window(window), m_Parent(parent)
+        : m_Session(session), m_Window(window), m_Parent(parent),
+          m_Companion(session->isCompanion()), m_Main((HWND)session->companionParentWindow())
     {
         QSettings settings;
         m_Edge = qBound(0, settings.value("streammenu/edge", EdgeBottom).toInt(), 3);
         m_Pos = qBound(0.0, settings.value("streammenu/pos", 0.0).toDouble(), 1.0);
         m_Visible = StreamingPreferences::get()->showStreamMenuButton;
+        if (!m_Companion) {
+            // Shared with the extra screens' menus so their Sound check mark is right
+            settings.setValue("streammenu/muted", m_Session->isAudioMuted());
+        }
 
         enableDarkMenus();
         registerClass();
@@ -360,14 +365,18 @@ private:
         const QString key = QStringLiteral("\tCtrl+Alt+Shift+");
         HMENU menu = CreatePopupMenu();
 
-        add(menu, CmdFullScreen, (m_Session->isFullScreen() ? "Windowed" : "Fullscreen") + key + "X");
+        // Check marks show what's on; stream-wide state lives in the main window's session
+        QSettings shared;
+        bool soundOn = m_Companion ? !shared.value("streammenu/muted", false).toBool() : !m_Session->isAudioMuted();
+        int screenCount = m_Companion ? shared.value("extrascreens", 0).toInt() + 1 : m_Session->extraScreenCount() + 1;
+
+        add(menu, CmdFullScreen, "Fullscreen" + key + "X", m_Session->isFullScreen());
         add(menu, CmdMinimize, "Minimize" + key + "D");
         add(menu, CmdMetrics, "Metrics" + key + "S", m_Session->isStatsOverlayVisible());
-        add(menu, CmdSound, "Sound", !m_Session->isAudioMuted());
+        add(menu, CmdSound, "Sound", soundOn);
         separator(menu);
 
         HMENU screens = CreatePopupMenu();
-        int screenCount = m_Session->extraScreenCount() + 1;
         for (int n = 1; n <= 3; n++) {
             add(screens, CmdScreens1 + n - 1, n == 1 ? QString("1 screen") : QString("%1 screens").arg(n), n == screenCount, true);
         }
@@ -386,9 +395,9 @@ private:
 
         add(menu, CmdImmersive, "Immersive mode (capture mouse)" + key + "M", m_Session->isImmersive());
         add(menu, CmdReleaseInput, "Release mouse and keyboard" + key + "Z");
-        add(menu, CmdCursor, "Show/hide local cursor" + key + "C");
-        add(menu, CmdLockCursor, "Lock cursor to window" + key + "L");
-        add(menu, CmdSystemKeys, "Capture system keys" + key + "K");
+        add(menu, CmdCursor, "Show local cursor" + key + "C", m_Session->isLocalCursorVisible());
+        add(menu, CmdLockCursor, "Lock cursor to window" + key + "L", m_Session->isCursorLocked());
+        add(menu, CmdSystemKeys, "Capture system keys" + key + "K", m_Session->isSystemKeysCaptured());
         add(menu, CmdPaste, "Paste clipboard as text" + key + "V");
         add(menu, CmdCtrlAltDel, "Send Ctrl+Alt+Del");
         separator(menu);
@@ -405,16 +414,66 @@ private:
         run(cmd, list);
     }
 
-    void run(UINT cmd, const std::vector<Resolution>& list)
+    // Commands about the whole stream: the main window runs them; an extra screen's window
+    // forwards them there. Resolutions travel as width/height in lParam.
+    static bool isStreamWide(UINT cmd)
     {
+        return cmd == CmdDisconnect || cmd == CmdQuitAppAndExit || cmd == CmdSound ||
+               (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) || cmd == CmdResolution;
+    }
+
+    static UINT commandMessage()
+    {
+        static UINT message = RegisterWindowMessageW(L"MoonlightStreamMenuCommand");
+        return message;
+    }
+
+    void runStreamWide(UINT cmd, LPARAM lParam)
+    {
+        if (m_Companion) {
+            if (m_Main != nullptr && IsWindow(m_Main)) {
+                PostMessageW(m_Main, commandMessage(), cmd, lParam);
+            }
+            return;
+        }
+
         switch (cmd) {
-        case 0: break; // dismissed
         case CmdDisconnect:     m_Session->runShortcutCommand('Q'); break;
         case CmdQuitAppAndExit: m_Session->runShortcutCommand('E'); break;
+        case CmdSound:
+            m_Session->setAudioMuted(!m_Session->isAudioMuted());
+            QSettings().setValue("streammenu/muted", m_Session->isAudioMuted());
+            break;
+        case CmdResolution:
+            if (LOWORD(lParam) != m_Session->streamWidth() || HIWORD(lParam) != m_Session->streamHeight()) {
+                m_Session->reconnectWithResolution(LOWORD(lParam), HIWORD(lParam));
+            }
+            break;
+        default:
+            if (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) {
+                m_Session->setExtraScreenCount((int)(cmd - CmdScreens1));
+            }
+            break;
+        }
+    }
+
+    void run(UINT cmd, const std::vector<Resolution>& list)
+    {
+        if (cmd >= CmdResolution && cmd < CmdResolution + list.size()) {
+            const auto& r = list[cmd - CmdResolution];
+            runStreamWide(CmdResolution, MAKELPARAM(r.w, r.h));
+            return;
+        }
+        if (isStreamWide(cmd)) {
+            runStreamWide(cmd, 0);
+            return;
+        }
+
+        switch (cmd) {
+        case 0: break; // dismissed
         case CmdFullScreen:     m_Session->runShortcutCommand('X'); break;
         case CmdMinimize:       m_Session->runShortcutCommand('D'); break;
         case CmdMetrics:        m_Session->runShortcutCommand('S'); break;
-        case CmdSound:          m_Session->setAudioMuted(!m_Session->isAudioMuted()); break;
         case CmdImmersive:      m_Session->toggleImmersive(); break;
         case CmdReleaseInput:   m_Session->runShortcutCommand('Z'); break;
         case CmdCursor:         m_Session->runShortcutCommand('C'); break;
@@ -423,17 +482,7 @@ private:
         case CmdPaste:          m_Session->runShortcutCommand('V'); break;
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
         case CmdHideButton:     toggle(); break;
-        default:
-            if (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) {
-                m_Session->setExtraScreenCount((int)(cmd - CmdScreens1));
-            }
-            else if (cmd >= CmdResolution && cmd < CmdResolution + list.size()) {
-                const auto& r = list[cmd - CmdResolution];
-                if (r.w != m_Session->streamWidth() || r.h != m_Session->streamHeight()) {
-                    m_Session->reconnectWithResolution(r.w, r.h);
-                }
-            }
-            break;
+        default: break;
         }
     }
 
@@ -557,6 +606,11 @@ private:
                                        UINT_PTR subclassId, DWORD_PTR refData)
     {
         auto self = (StreamMenu*)refData;
+        if (msg == commandMessage() && !self->m_Companion) {
+            // A stream-wide command from an extra screen's menu
+            self->runStreamWide((UINT)wParam, lParam);
+            return 0;
+        }
         switch (msg) {
         case WM_WINDOWPOSCHANGED:
         case WM_SIZE:
@@ -586,6 +640,8 @@ private:
     POINT m_PressCursor = {};
     RECT m_PressRect = {};
     int m_RenderedSize = 0;
+    bool m_Companion = false;   // an extra screen's window: stream-wide commands go to m_Main
+    HWND m_Main = nullptr;
 };
 
 StreamMenu* streamMenuCreate(Session* session, SDL_Window* window)

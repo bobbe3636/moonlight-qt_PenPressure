@@ -147,6 +147,12 @@ public:
     void setExtraScreenCount(int count);
     bool isCompanion() const { return m_IsCompanion; }
     void setCompanion(bool companion) { m_IsCompanion = companion; }
+    // A companion's menu forwards stream-wide commands to the main window (its HWND)
+    quintptr companionParentWindow() const { return m_CompanionParentWindow; }
+    void setCompanionParentWindow(quintptr window) { m_CompanionParentWindow = window; }
+    bool isLocalCursorVisible() { return m_InputHandler != nullptr && m_InputHandler->isLocalCursorVisible(); }
+    bool isCursorLocked() { return m_InputHandler != nullptr && m_InputHandler->isPointerRegionLockActive(); }
+    bool isSystemKeysCaptured() { return m_InputHandler != nullptr && m_InputHandler->isSystemKeyCaptureActive(); }
     int streamWidth() const { return m_StreamConfig.width; }
     int streamHeight() const { return m_StreamConfig.height; }
     void reconnectWithResolution(int width, int height);
@@ -158,6 +164,7 @@ private:
     class StreamMenu* m_StreamMenu = nullptr;
     std::atomic<bool> m_UserAudioMuted { false };  // muted from the stream menu (independent of focus muting)
     bool m_IsCompanion = false;
+    quintptr m_CompanionParentWindow = 0;
     QStringList m_RelaunchArgs;
 
 signals:

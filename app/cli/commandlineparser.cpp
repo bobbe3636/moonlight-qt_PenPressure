@@ -374,7 +374,8 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
 
     // Internal: a companion window for one of the host's extra screens (started by Moonlight
     // itself; see Session). <host> is then the main host's UUID.
-    for (const char* name : {"companion-screen", "companion-address", "companion-http-port", "companion-https-port"}) {
+    for (const char* name : {"companion-screen", "companion-address", "companion-http-port", "companion-https-port",
+                             "companion-parent-window"}) {
         QCommandLineOption option(name, name, "value");
         option.setFlags(QCommandLineOption::HiddenFromHelp);
         parser.addOption(option);
@@ -391,6 +392,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         m_CompanionAddress = parser.value("companion-address");
         m_CompanionHttpPort = parser.value("companion-http-port").toUShort();
         m_CompanionHttpsPort = parser.value("companion-https-port").toUShort();
+        m_CompanionParentWindow = parser.value("companion-parent-window").toULongLong();
 
         // A companion is always its own window, never spawns companions itself, and uses
         // absolute mouse so the cursor can move between the screens' windows
@@ -572,6 +574,11 @@ uint16_t StreamCommandLineParser::getCompanionHttpPort() const
 uint16_t StreamCommandLineParser::getCompanionHttpsPort() const
 {
     return m_CompanionHttpsPort;
+}
+
+quintptr StreamCommandLineParser::getCompanionParentWindow() const
+{
+    return m_CompanionParentWindow;
 }
 
 ListCommandLineParser::ListCommandLineParser()

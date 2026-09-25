@@ -232,6 +232,7 @@ public:
         NvApp app = m_Computer->appList[index];
         Session* session = new Session(m_Computer, app, m_Preferences);
         session->setCompanion(true);
+        session->setCompanionParentWindow(m_CompanionParentWindow);
         emit q->sessionCreated(app.name, session);
     }
 
@@ -272,6 +273,7 @@ public:
     QString m_CompanionAddress;
     uint16_t m_CompanionHttpPort = 0;
     uint16_t m_CompanionHttpsPort = 0;
+    quintptr m_CompanionParentWindow = 0;
     StreamingPreferences *m_Preferences;
     ComputerManager *m_ComputerManager;
     ComputerSeeker *m_ComputerSeeker;
@@ -300,9 +302,10 @@ Launcher::~Launcher()
 {
 }
 
-void Launcher::setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort)
+void Launcher::setCompanion(int screen, QString address, uint16_t httpPort, uint16_t httpsPort, quintptr parentWindow)
 {
     Q_D(Launcher);
+    d->m_CompanionParentWindow = parentWindow;
     d->m_CompanionScreen = screen;
     d->m_CompanionAddress = address;
     d->m_CompanionHttpPort = httpPort;
