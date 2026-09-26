@@ -43,6 +43,7 @@ enum Command {
     CmdPaste,
     CmdCtrlAltDel,
     CmdHideButton,
+    CmdHalfBitrate,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
 };
@@ -365,6 +366,9 @@ private:
         for (int n = 1; n <= 3; n++) {
             add(screens, CmdScreens1 + n - 1, n == 1 ? QString("1 screen") : QString("%1 screens").arg(n), n == screenCount, true);
         }
+        separator(screens);
+        add(screens, CmdHalfBitrate, "Extra screens at half bitrate (next launch)",
+            shared.value("extrascreenshalfbitrate", false).toBool());
         submenu(menu, screens, "Screens");
 
         HMENU resolutionMenu = CreatePopupMenu();
@@ -467,6 +471,12 @@ private:
         case CmdPaste:          m_Session->runShortcutCommand('V'); break;
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
         case CmdHideButton:     toggle(); break;
+        case CmdHalfBitrate:
+            // Any screen's window can flip it, so start from the stored value
+            StreamingPreferences::get()->extraScreensHalfBitrate =
+                    !QSettings().value("extrascreenshalfbitrate", false).toBool();
+            StreamingPreferences::get()->save();
+            break;
         default: break;
         }
     }

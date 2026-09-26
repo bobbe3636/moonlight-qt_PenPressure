@@ -16,6 +16,10 @@ public:
 
     Q_INVOKABLE void save();
 
+    // For an extra screen's window: windowed, absolute mouse, no companions of its own and
+    // optionally half bitrate, for this session only (save() keeps the user's own values)
+    void applyCompanionOverrides();
+
     void reload();
 
     enum AudioConfig
@@ -156,6 +160,7 @@ public:
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(int extraScreens MEMBER extraScreens NOTIFY extraScreensChanged)
+    Q_PROPERTY(bool extraScreensHalfBitrate MEMBER extraScreensHalfBitrate NOTIFY extraScreensHalfBitrateChanged)
     Q_PROPERTY(bool immersiveMode MEMBER immersiveMode NOTIFY immersiveModeChanged)
     Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
@@ -192,6 +197,7 @@ public:
     bool swapFaceButtons;
     bool keepAwake;
     int extraScreens; // 0..2 companion windows for hosts with Apollo extra screens
+    bool extraScreensHalfBitrate; // extra screens stream at half the bitrate
     bool immersiveMode; // capture mouse/keyboard in the stream window (off: the mouse moves freely in and out)
     bool showStreamMenuButton;
     int packetSize;
@@ -243,6 +249,7 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void extraScreensChanged();
+    void extraScreensHalfBitrateChanged();
     void immersiveModeChanged();
     void showStreamMenuButtonChanged();
     void languageChanged();
@@ -254,5 +261,12 @@ private:
     QString getSuffixFromLanguage(Language lang);
 
     QQmlEngine* m_QmlEngine;
+
+    bool m_LoadedExtraScreensHalfBitrate = false;
+    bool m_Companion = false;
+    WindowMode m_SavedWindowMode = WM_WINDOWED;
+    bool m_SavedAbsoluteMouseMode = false;
+    int m_SavedExtraScreens = 0;
+    int m_SavedBitrateKbps = 0;
 };
 

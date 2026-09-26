@@ -966,6 +966,22 @@ Flickable {
                 }
 
                 CheckBox {
+                    id: extraScreensHalfBitrateCheck
+                    width: parent.width
+                    text: qsTr("Extra screens at half bitrate (for more performance)")
+                    font.pointSize: 12
+                    checked: StreamingPreferences.extraScreensHalfBitrate
+                    onCheckedChanged: {
+                        StreamingPreferences.extraScreensHalfBitrate = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 5000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Extra screens stream at half the video bitrate (at least 10 Mbps). Saves bandwidth and host encoding work when you use 2 or 3 screens; the main screen keeps the full bitrate.")
+                }
+
+                CheckBox {
                     id: audioPcCheck
                     width: parent.width
                     text: qsTr("Mute host PC speakers while streaming")

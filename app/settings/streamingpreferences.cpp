@@ -51,6 +51,7 @@
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_EXTRASCREENS "extrascreens"
+#define SER_EXTRASCREENSHALFBITRATE "extrascreenshalfbitrate"
 #define SER_IMMERSIVEMODE "immersivemode"
 #define SER_STREAMMENUBUTTON "streammenubutton"
 #define SER_LANGUAGE "language"
@@ -155,6 +156,8 @@ void StreamingPreferences::reload()
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
     keepAwake = settings.value(SER_KEEPAWAKE, true).toBool();
     extraScreens = qBound(0, settings.value(SER_EXTRASCREENS, 0).toInt(), 2);
+    extraScreensHalfBitrate = settings.value(SER_EXTRASCREENSHALFBITRATE, false).toBool();
+    m_LoadedExtraScreensHalfBitrate = extraScreensHalfBitrate;
     immersiveMode = settings.value(SER_IMMERSIVEMODE, false).toBool();
     showStreamMenuButton = settings.value(SER_STREAMMENUBUTTON, true).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
@@ -369,8 +372,46 @@ void StreamingPreferences::save()
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
     settings.setValue(SER_EXTRASCREENS, extraScreens);
+    if (extraScreensHalfBitrate != m_LoadedExtraScreensHalfBitrate) {
+        // Only when this process changed it: every screen's menu can flip it, and another
+        // window's older copy must not undo that
+        settings.setValue(SER_EXTRASCREENSHALFBITRATE, extraScreensHalfBitrate);
+        m_LoadedExtraScreensHalfBitrate = extraScreensHalfBitrate;
+    }
     settings.setValue(SER_IMMERSIVEMODE, immersiveMode);
     settings.setValue(SER_STREAMMENUBUTTON, showStreamMenuButton);
+
+    if (m_Companion) {
+        // Keep the user's own values for what this extra screen's window overrides. The
+        // absolute mouse only counts as the user's choice when immersive mode changed it.
+        settings.setValue(SER_WINDOWMODE, static_cast<int>(m_SavedWindowMode));
+        settings.setValue(SER_EXTRASCREENS, m_SavedExtraScreens);
+        settings.setValue(SER_BITRATE, m_SavedBitrateKbps);
+        if (absoluteMouseMode) {
+            settings.setValue(SER_ABSMOUSEMODE, m_SavedAbsoluteMouseMode);
+        }
+    }
+}
+
+void StreamingPreferences::applyCompanionOverrides()
+{
+    m_Companion = true;
+    m_SavedWindowMode = windowMode;
+    m_SavedAbsoluteMouseMode = absoluteMouseMode;
+    m_SavedExtraScreens = extraScreens;
+    m_SavedBitrateKbps = bitrateKbps;
+
+    // Its own window, absolute mouse so the cursor moves freely between the screens' windows,
+    // and it never opens extra screens itself
+    windowMode = WM_WINDOWED;
+    absoluteMouseMode = true;
+    extraScreens = 0;
+
+    // Optional: extra screens mostly show static content, so half the main stream's bitrate
+    // (at least 10 Mbps) keeps the total bandwidth of 2-3 screens reasonable, e.g. over a VPN
+    if (extraScreensHalfBitrate) {
+        bitrateKbps = qMax(10000, bitrateKbps / 2);
+    }
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

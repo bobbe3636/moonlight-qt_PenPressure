@@ -394,15 +394,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         m_CompanionHttpsPort = parser.value("companion-https-port").toUShort();
         m_CompanionParentWindow = parser.value("companion-parent-window").toULongLong();
 
-        // A companion is always its own window, never spawns companions itself, and uses
-        // absolute mouse so the cursor can move between the screens' windows
-        preferences->windowMode = StreamingPreferences::WM_WINDOWED;
-        preferences->absoluteMouseMode = true;
-        preferences->extraScreens = 0;
-
-        // Extra screens mostly show static content: half the main stream's bitrate (at least
-        // 10 Mbps) keeps the total bandwidth of 2-3 screens reasonable, e.g. over a VPN
-        preferences->bitrateKbps = qMax(10000, preferences->bitrateKbps / 2);
+        preferences->applyCompanionOverrides();
     }
 
     // Resolve display's width and height
