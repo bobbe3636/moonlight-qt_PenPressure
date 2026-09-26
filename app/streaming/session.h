@@ -160,6 +160,13 @@ public:
     void reconnectWithResolution(int width, int height);
     void sendCtrlAltDel();
 
+    // Stream menu: pick a new keyboard shortcut / reload them after a reset
+    void startShortcutCapture(const QString& id, const QString& label);
+    void reloadShortcuts();
+
+    // A short message over the stream (the status overlay), optionally hidden after 3 s
+    void showStatusMessage(const QString& text, bool autoHide);
+
     void setShouldExit(bool quitHostApp = false);
 
 private:

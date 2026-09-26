@@ -154,6 +154,12 @@ public:
     // Stream menu: run one of the Ctrl+Alt+Shift commands by its letter (e.g. 'X')
     void runShortcutCommand(char letter);
 
+    // Read the (user-rebindable) shortcuts from the settings
+    void loadShortcuts();
+
+    // The next key press (with its modifiers) becomes the shortcut for `id`
+    void startShortcutCapture(const QString& id, const QString& label);
+
     bool isAbsoluteMouseMode() const { return m_AbsoluteMouseMode; }
 
     bool isLocalCursorVisible() const { return m_MouseCursorCapturedVisibilityState == SDL_ENABLE; }
@@ -267,7 +273,10 @@ private:
         bool enabled;
     } m_SpecialKeyCombos[KeyComboMax];
 
-    void loadShortcuts();
+    void captureShortcutKey(SDL_KeyboardEvent* event);
+
+    QString m_CaptureShortcutId;     // non-empty while the user picks a new shortcut
+    QString m_CaptureShortcutLabel;
 
     SDL_TouchFingerEvent m_LastTouchDownEvent;
     SDL_TouchFingerEvent m_LastTouchUpEvent;

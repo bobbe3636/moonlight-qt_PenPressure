@@ -1551,6 +1551,34 @@ void Session::toggleFullscreen()
     m_InputHandler->updatePointerRegionLock();
 }
 
+void Session::startShortcutCapture(const QString& id, const QString& label)
+{
+    if (m_InputHandler != nullptr) {
+        m_InputHandler->startShortcutCapture(id, label);
+    }
+}
+
+void Session::reloadShortcuts()
+{
+    if (m_InputHandler != nullptr) {
+        m_InputHandler->loadShortcuts();
+    }
+}
+
+void Session::showStatusMessage(const QString& text, bool autoHide)
+{
+    m_OverlayManager.updateOverlayText(Overlay::OverlayStatusUpdate, text.toUtf8().constData());
+    m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, true);
+    if (autoHide) {
+        SDL_AddTimer(3000, [](Uint32, void*) -> Uint32 {
+            if (Session::get() != nullptr) {
+                Session::get()->getOverlayManager().setOverlayState(Overlay::OverlayStatusUpdate, false);
+            }
+            return 0;
+        }, nullptr);
+    }
+}
+
 void Session::notifyMouseEmulationMode(bool enabled)
 {
     m_MouseEmulationRefCount += enabled ? 1 : -1;

@@ -47,6 +47,8 @@ enum Command {
     CmdHalfBitrate,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
+    CmdShortcutsReset = 299,
+    CmdShortcut = 300,      // 300 + index into Shortcuts::actions()
 };
 
 constexpr UINT_PTR k_ParentSubclassId = 0x4D4C534D; // 'MLSM'
@@ -391,6 +393,19 @@ private:
         add(menu, CmdLockCursor, "Lock cursor to window" + keyOf("lock_cursor"), m_Session->isCursorLocked());
         add(menu, CmdPaste, "Paste clipboard as text" + keyOf("paste"));
         add(menu, CmdCtrlAltDel, QString("Send Ctrl+Alt+Del") + keyOf("ctrl_alt_del"));
+
+        HMENU shortcutsMenu = CreatePopupMenu();
+        const auto& actions = Shortcuts::actions();
+        for (int i = 0; i < actions.size(); i++) {
+            QString binding = Shortcuts::binding(actions[i].id);
+            add(shortcutsMenu, CmdShortcut + (UINT)i,
+                QString(actions[i].label) + "\t" + (binding.isEmpty() ? QString("None") : binding));
+        }
+        separator(shortcutsMenu);
+        add(shortcutsMenu, CmdShortcutsReset, "Reset all to defaults");
+        separator(shortcutsMenu);
+        AppendMenuW(shortcutsMenu, MF_STRING | MF_GRAYED, 0, L"Pick one, then press the new keys");
+        submenu(menu, shortcutsMenu, "Keyboard shortcuts");
         separator(menu);
 
         add(menu, CmdHideButton, (canShowButton() ? "Hide this button" : "Show the menu button") + keyOf("menu_button"));
@@ -450,6 +465,19 @@ private:
 
     void run(UINT cmd, const std::vector<Resolution>& list)
     {
+        const auto& actions = Shortcuts::actions();
+        if (cmd >= CmdShortcut && cmd < CmdShortcut + (UINT)actions.size()) {
+            const auto& action = actions[cmd - CmdShortcut];
+            m_Session->startShortcutCapture(action.id, action.label);
+            return;
+        }
+        if (cmd == CmdShortcutsReset) {
+            Shortcuts::resetAll();
+            m_Session->reloadShortcuts();
+            m_Session->showStatusMessage("Keyboard shortcuts reset to the defaults", true);
+            return;
+        }
+
         if (cmd >= CmdResolution && cmd < CmdResolution + list.size()) {
             const auto& r = list[cmd - CmdResolution];
             runStreamWide(CmdResolution, MAKELPARAM(r.w, r.h));

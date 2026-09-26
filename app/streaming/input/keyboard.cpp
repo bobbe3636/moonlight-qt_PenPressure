@@ -99,6 +99,62 @@ void SdlInputHandler::loadShortcuts()
     }
 }
 
+void SdlInputHandler::startShortcutCapture(const QString& id, const QString& label)
+{
+    m_CaptureShortcutId = id;
+    m_CaptureShortcutLabel = label;
+
+    // Nothing held down should end up in the new shortcut or stuck on the host
+    raiseAllKeys();
+    Session::get()->showStatusMessage(QString("New shortcut for \"%1\": press the keys\nEsc cancels, Backspace removes the shortcut").arg(label), false);
+}
+
+void SdlInputHandler::captureShortcutKey(SDL_KeyboardEvent* event)
+{
+    SDL_Keycode key = event->keysym.sym;
+    switch (key) {
+    case SDLK_LCTRL: case SDLK_RCTRL: case SDLK_LSHIFT: case SDLK_RSHIFT:
+    case SDLK_LALT: case SDLK_RALT: case SDLK_LGUI: case SDLK_RGUI:
+        return; // wait for the key that goes with the modifiers
+    default:
+        break;
+    }
+
+    int modifiers = modifierGroups(event->keysym.mod);
+    QString id = m_CaptureShortcutId;
+    QString label = m_CaptureShortcutLabel;
+
+    if (modifiers == 0 && key == SDLK_ESCAPE) {
+        m_CaptureShortcutId.clear();
+        Session::get()->showStatusMessage(QString("Shortcut for \"%1\" unchanged").arg(label), true);
+        return;
+    }
+
+    QString binding;
+    if (!(modifiers == 0 && key == SDLK_BACKSPACE)) {
+        const char* name = SDL_GetKeyName(key);
+        if (name == nullptr || *name == 0) {
+            return; // a key SDL can't name: keep waiting
+        }
+        QStringList parts;
+        if (modifiers & KMOD_CTRL) parts << "Ctrl";
+        if (modifiers & KMOD_ALT) parts << "Alt";
+        if (modifiers & KMOD_SHIFT) parts << "Shift";
+        if (modifiers & KMOD_GUI) parts << "Win";
+        parts << QString::fromUtf8(name);
+        binding = parts.join('+');
+    }
+
+    m_CaptureShortcutId.clear();
+    Shortcuts::setBinding(id, binding);
+    loadShortcuts();
+
+    QString message = binding.isEmpty()
+            ? QString("\"%1\" has no shortcut now").arg(label)
+            : QString("\"%1\": %2").arg(label, binding);
+    Session::get()->showStatusMessage(message + "\n(other screens use it from their next start)", true);
+}
+
 void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 {
     switch (combo) {
@@ -305,6 +361,14 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
     if (event->repeat) {
         // Ignore repeat key down events
         SDL_assert(event->state == SDL_PRESSED);
+        return;
+    }
+
+    // Picking a new shortcut from the stream menu: the keys don't go to the host
+    if (!m_CaptureShortcutId.isEmpty()) {
+        if (event->state == SDL_PRESSED) {
+            captureShortcutKey(event);
+        }
         return;
     }
 
