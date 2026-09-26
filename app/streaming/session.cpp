@@ -928,6 +928,16 @@ bool Session::initialize(QQuickWindow* qtWindow)
         break;
     }
 
+#ifdef Q_OS_WIN32
+    // The stream menu button floats over the stream, and a window over an exclusive-fullscreen
+    // swapchain knocks it out of fullscreen. With the button on, fullscreen is borderless: with
+    // the flip-model swapchain Windows 10/11 still presents it directly (no extra latency).
+    if (m_FullScreenFlag == SDL_WINDOW_FULLSCREEN && m_Preferences->showStreamMenuButton &&
+            WMUtils::isRunningDesktopEnvironment()) {
+        m_FullScreenFlag = SDL_WINDOW_FULLSCREEN_DESKTOP;
+    }
+#endif
+
 #if !SDL_VERSION_ATLEAST(2, 0, 11)
     // HACK: Using a full-screen window breaks mouse capture on the Pi's LXDE
     // GUI environment. Force the session to use windowed mode (which won't
