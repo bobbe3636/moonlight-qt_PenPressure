@@ -168,6 +168,7 @@ public:
     Q_PROPERTY(int extraScreens MEMBER extraScreens NOTIFY extraScreensChanged)
     Q_PROPERTY(bool extraScreensHalfBitrate MEMBER extraScreensHalfBitrate NOTIFY extraScreensHalfBitrateChanged)
     Q_PROPERTY(bool immersiveMode MEMBER immersiveMode NOTIFY immersiveModeChanged)
+    Q_PROPERTY(int penInputMode MEMBER penInputMode NOTIFY penInputModeChanged)
     Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
@@ -205,6 +206,7 @@ public:
     int extraScreens; // 0..2 companion windows for hosts with Apollo extra screens
     bool extraScreensHalfBitrate; // extra screens stream at half the bitrate
     bool immersiveMode; // capture mouse/keyboard in the stream window (off: the mouse moves freely in and out)
+    int penInputMode; // 0 automatic, 1 Windows Ink (+ raw Wacom reports), 2 Wintab
     bool showStreamMenuButton;
     int packetSize;
     AudioConfig audioConfig;
@@ -257,6 +259,7 @@ signals:
     void extraScreensChanged();
     void extraScreensHalfBitrateChanged();
     void immersiveModeChanged();
+    void penInputModeChanged();
     void showStreamMenuButtonChanged();
     void languageChanged();
     void rendererSelectionChanged();

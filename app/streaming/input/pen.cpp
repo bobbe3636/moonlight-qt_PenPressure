@@ -169,14 +169,15 @@ struct WacomRawReader
 
 // Wintab.
 //
-// The tablet driver's own pen API (Wacom's, and most other makers ship one too) reports the
-// tablet's full pressure range for any model, where Windows Ink stops at 1024 levels. We read
-// only pressure from it; position, tilt and buttons keep coming from WM_POINTER. Wintab32.dll
-// is loaded at runtime, so nothing changes where there's no Wintab driver.
-//
-// Wintab delivers packets to one context at a time (the top of its overlap order): the stream
-// window the pen enters brings its context to the top, so with several screens' windows the
-// one under the pen gets the pressure.
+// The tablet driver's own pen API (Wacom's; most other makers ship one too) reports the
+// tablet's full pressure range, tilt, buttons and eraser for any model, where Windows Ink stops
+// at 1024 levels. It's all or nothing: while a window has a Wintab context open, Wacom's driver
+// sends it plain mouse input instead of Windows Ink pen messages. So in Wintab mode the whole
+// pen comes from Wintab packets: position from the cursor (which the driver still moves along
+// its screen mapping), the rest from the packet; and the driver's mouse input is dropped while
+// the pen is over the stream, so the host doesn't get it twice. Wintab32.dll is loaded at
+// runtime. Wintab sends packets to one context at a time, the top of its overlap order: the
+// stream window the cursor enters brings its context to the top (several screens' windows).
 
 namespace wintab {
     DECLARE_HANDLE(HCTX);
@@ -187,11 +188,17 @@ namespace wintab {
     constexpr UINT WTI_DEVICES = 100;
     constexpr UINT DVC_NPRESSURE = 15;
     constexpr UINT CXO_MESSAGES = 0x0004;
+    constexpr UINT TPS_PROXIMITY = 0x0001;
+    constexpr UINT TPS_INVERT = 0x0010;
     constexpr WTPKT PK_STATUS = 0x0002;
     constexpr WTPKT PK_TIME = 0x0004;
+    constexpr WTPKT PK_CURSOR = 0x0020;
+    constexpr WTPKT PK_BUTTONS = 0x0040;
     constexpr WTPKT PK_NORMAL_PRESSURE = 0x0400;
+    constexpr WTPKT PK_ORIENTATION = 0x1000;
     constexpr UINT WT_DEFBASE = 0x7FF0;
     constexpr UINT WT_PACKET = WT_DEFBASE;
+    constexpr UINT WT_PROXIMITY = WT_DEFBASE + 5;
 
     struct AXIS {
         LONG axMin;
@@ -213,23 +220,36 @@ namespace wintab {
         FIX32 lcSysSensX, lcSysSensY;
     };
 
-    // Fields in the order of their PK_ bits: PK_STATUS, PK_TIME, PK_NORMAL_PRESSURE
+    struct ORIENTATION {
+        int orAzimuth;   // tenths of a degree, clockwise from the tablet's top
+        int orAltitude;  // tenths of a degree above the tablet (900 = upright)
+        int orTwist;
+    };
+
+    // Fields in the order of their PK_ bits
     struct PACKET {
-        UINT status;
-        DWORD time;
-        UINT normalPressure;
+        UINT status;          // PK_STATUS
+        DWORD time;           // PK_TIME
+        UINT cursor;          // PK_CURSOR
+        DWORD buttons;        // PK_BUTTONS
+        UINT normalPressure;  // PK_NORMAL_PRESSURE
+        ORIENTATION orientation;  // PK_ORIENTATION
     };
 }
 
-struct WintabReader
+struct WintabPen
 {
     HMODULE dll = nullptr;
     wintab::HCTX ctx = nullptr;
     float maxPressure = 1023.0f;
-    std::atomic<uint32_t> pressure { 0 };
-    std::atomic<uint64_t> lastPacketMs { 0 };
     std::atomic<uint32_t> packetCount { 0 };  // for the pen statistics log line
-    bool seenPacket = false;
+
+    // Pen state, UI thread only
+    bool inProximity = false;
+    bool inside = false;    // the cursor is over this stream window
+    bool contact = false;
+    uint64_t lastPacketMs = 0;
+    bool loggedFirst = false;
 
     UINT (WINAPI* fnInfo)(UINT, UINT, LPVOID) = nullptr;
     wintab::HCTX (WINAPI* fnOpen)(HWND, wintab::LOGCONTEXTW*, BOOL) = nullptr;
@@ -237,82 +257,70 @@ struct WintabReader
     BOOL (WINAPI* fnPacket)(wintab::HCTX, UINT, LPVOID) = nullptr;
     BOOL (WINAPI* fnOverlap)(wintab::HCTX, BOOL) = nullptr;
 
-    // Only trust pressure that is current
-    bool fresh() const
-    {
-        return seenPacket && GetTickCount64() - lastPacketMs < 100;
-    }
-
-    static WintabReader* open(HWND hwnd)
+    static WintabPen* open(HWND hwnd)
     {
         HMODULE dll = LoadLibraryW(L"Wintab32.dll");
         if (dll == nullptr) {
             return nullptr;
         }
 
-        auto reader = new WintabReader();
-        reader->dll = dll;
-        reader->fnInfo = (decltype(fnInfo))GetProcAddress(dll, "WTInfoW");
-        reader->fnOpen = (decltype(fnOpen))GetProcAddress(dll, "WTOpenW");
-        reader->fnClose = (decltype(fnClose))GetProcAddress(dll, "WTClose");
-        reader->fnPacket = (decltype(fnPacket))GetProcAddress(dll, "WTPacket");
-        reader->fnOverlap = (decltype(fnOverlap))GetProcAddress(dll, "WTOverlap");
-        if (!reader->fnInfo || !reader->fnOpen || !reader->fnClose || !reader->fnPacket || !reader->fnOverlap ||
-                reader->fnInfo(0, 0, nullptr) == 0) {
+        auto pen = new WintabPen();
+        pen->dll = dll;
+        pen->fnInfo = (decltype(fnInfo))GetProcAddress(dll, "WTInfoW");
+        pen->fnOpen = (decltype(fnOpen))GetProcAddress(dll, "WTOpenW");
+        pen->fnClose = (decltype(fnClose))GetProcAddress(dll, "WTClose");
+        pen->fnPacket = (decltype(fnPacket))GetProcAddress(dll, "WTPacket");
+        pen->fnOverlap = (decltype(fnOverlap))GetProcAddress(dll, "WTOverlap");
+        if (!pen->fnInfo || !pen->fnOpen || !pen->fnClose || !pen->fnPacket || !pen->fnOverlap ||
+                pen->fnInfo(0, 0, nullptr) == 0) {
             // No Wintab service running (e.g. the driver's Wintab is off)
-            delete reader;
+            delete pen;
             return nullptr;
         }
 
         wintab::AXIS pressureAxis = {};
-        if (reader->fnInfo(wintab::WTI_DEVICES, wintab::DVC_NPRESSURE, &pressureAxis) && pressureAxis.axMax > 0) {
-            reader->maxPressure = (float)pressureAxis.axMax;
+        if (pen->fnInfo(wintab::WTI_DEVICES, wintab::DVC_NPRESSURE, &pressureAxis) && pressureAxis.axMax > 0) {
+            pen->maxPressure = (float)pressureAxis.axMax;
         }
 
-        // A digitizing context (not a system one: the driver keeps moving the cursor) that
-        // posts WT_PACKET to the stream window with just the pressure
+        // A digitizing context (the driver keeps moving the cursor along its own mapping) that
+        // posts WT_PACKET and WT_PROXIMITY to the stream window
         wintab::LOGCONTEXTW lc = {};
-        if (!reader->fnInfo(wintab::WTI_DEFCONTEXT, 0, &lc)) {
-            delete reader;
+        if (!pen->fnInfo(wintab::WTI_DEFCONTEXT, 0, &lc)) {
+            delete pen;
             return nullptr;
         }
-        wcscpy_s(lc.lcName, L"Moonlight pen pressure");
+        wcscpy_s(lc.lcName, L"Moonlight pen");
         lc.lcOptions |= wintab::CXO_MESSAGES;
         lc.lcMsgBase = wintab::WT_DEFBASE;
-        lc.lcPktData = wintab::PK_STATUS | wintab::PK_TIME | wintab::PK_NORMAL_PRESSURE;
+        lc.lcPktData = wintab::PK_STATUS | wintab::PK_TIME | wintab::PK_CURSOR | wintab::PK_BUTTONS |
+                       wintab::PK_NORMAL_PRESSURE | wintab::PK_ORIENTATION;
         lc.lcPktMode = 0;  // absolute
-        lc.lcMoveMask = wintab::PK_NORMAL_PRESSURE;
-        reader->ctx = reader->fnOpen(hwnd, &lc, TRUE);
-        if (reader->ctx == nullptr) {
-            delete reader;
+        lc.lcMoveMask = lc.lcPktData;
+        lc.lcBtnDnMask = lc.lcBtnUpMask = 0xFFFFFFFF;
+        pen->ctx = pen->fnOpen(hwnd, &lc, TRUE);
+        if (pen->ctx == nullptr) {
+            delete pen;
             return nullptr;
         }
 
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Wintab available: %.0f pressure levels", reader->maxPressure + 1);
-        return reader;
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Wintab pen: %.0f pressure levels", pen->maxPressure + 1);
+        return pen;
     }
 
-    void onPacket(WPARAM serial)
-    {
-        wintab::PACKET packet;
-        if (fnPacket(ctx, (UINT)serial, &packet)) {
-            pressure = packet.normalPressure;
-            lastPacketMs = GetTickCount64();
-            packetCount++;
-            if (!seenPacket) {
-                seenPacket = true;
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using Wintab for pen pressure");
-            }
-        }
-    }
-
-    // The pen entered this window: its context gets the packets from now on
+    // The pen (or the mouse) is over this window: its context gets the packets from now on
     void bringToTop()
     {
         fnOverlap(ctx, TRUE);
     }
 
-    ~WintabReader()
+    // While the pen is near the tablet and has been talking to us, its mouse input is its own
+    bool ownsMouse() const
+    {
+        return inProximity && GetTickCount64() - lastPacketMs < 2000;
+    }
+
+    ~WintabPen()
     {
         if (ctx != nullptr) {
             fnClose(ctx);
@@ -320,6 +328,22 @@ struct WintabReader
         FreeLibrary(dll);
     }
 };
+
+// Windows' X/Y tilt convention (positive X = toward the right, positive Y = toward the user)
+// to the protocol's tilt from vertical plus azimuth: the exact inverse of the host-side
+// conversion in Sunshine/Apollo
+static void tiltXYToProtocol(double tiltXDeg, double tiltYDeg, uint16_t& rotation, uint8_t& tilt)
+{
+    double a = std::tan(tiltXDeg * k_Pi / 180.0);
+    double b = std::tan(tiltYDeg * k_Pi / 180.0);
+    double tiltDeg = std::atan(std::sqrt(a * a + b * b)) * 180.0 / k_Pi;
+    double azimuth = std::atan2(-a, b) * 180.0 / k_Pi;
+    if (azimuth < 0) {
+        azimuth += 360.0;
+    }
+    tilt = (uint8_t)qMin(90L, std::lround(tiltDeg));
+    rotation = (uint16_t)(std::lround(azimuth) % 360);
+}
 
 // Pen statistics, logged every 2 s while the pen is active ("Pen stats: ..."), to see how
 // evenly and how often samples leave this PC. Only touched on the UI thread.
@@ -331,7 +355,7 @@ static struct {
     uint32_t rawAtStart = 0, wintabAtStart = 0;
 } s_Stats;
 
-static void logPenStats(WacomRawReader* raw, WintabReader* wt)
+static void logPenStats(WacomRawReader* raw, WintabPen* wt)
 {
     uint64_t now = GetTickCount64();
     if (s_Stats.lastMessage != 0 && now - s_Stats.lastMessage < 500) {
@@ -370,8 +394,26 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     case WM_POINTERUP:
     case WM_POINTERUPDATE:
     case WM_POINTERCAPTURECHANGED:
-    case wintab::WT_PACKET:
         if (((SdlInputHandler*)refData)->handleNativePenMessage(hwnd, msg, wParam)) {
+            return 0;
+        }
+        break;
+    case wintab::WT_PACKET:
+    case wintab::WT_PROXIMITY:
+        if (((SdlInputHandler*)refData)->handleWintabMessage(hwnd, msg, wParam, lParam)) {
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDBLCLK:
+        if (((SdlInputHandler*)refData)->handleWintabMouse(msg)) {
             return 0;
         }
         break;
@@ -379,6 +421,9 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     case WM_MBUTTONUP:
     case WM_XBUTTONDOWN:
     case WM_XBUTTONUP:
+        if (((SdlInputHandler*)refData)->handleWintabMouse(msg)) {
+            return (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP) ? TRUE : 0;
+        }
         if (((SdlInputHandler*)refData)->handleNativePenMouseButton(msg, wParam)) {
             // WM_XBUTTON* must return TRUE when processed
             return (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP) ? TRUE : 0;
@@ -407,15 +452,17 @@ void SdlInputHandler::installNativePenHook()
 
     if (SetWindowSubclass(info.info.win.window, penSubclassProc, k_PenSubclassId, (DWORD_PTR)this)) {
         m_NativePenHwnd = info.info.win.window;
-        // MOONLIGHT_PEN_NO_RAW=1 skips the raw Wacom reader (to try Wintab on a supported model)
-        if (qEnvironmentVariableIntValue("MOONLIGHT_PEN_NO_RAW") == 0) {
-            m_WacomRaw = WacomRawReader::open();
+
+        // Pen input setting: 2 = Wintab (the whole pen from the tablet driver's Wintab); 0
+        // (automatic) and 1 = Windows Ink, with the raw Wacom reports where we know them
+        if (m_PenInputMode == 2) {
+            m_Wintab = WintabPen::open(info.info.win.window);
+            if (m_Wintab == nullptr) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Wintab isn't available: using Windows Ink for the pen");
+            }
         }
-        // Off by default: while a Wintab context is open, Wacom's driver stops sending this
-        // window Windows Ink pen messages (the pen becomes a mouse), which this path needs.
-        // MOONLIGHT_PEN_WINTAB=1 turns it on for experiments.
-        if (qEnvironmentVariableIntValue("MOONLIGHT_PEN_WINTAB") != 0) {
-            m_Wintab = WintabReader::open(info.info.win.window);
+        if (m_Wintab == nullptr) {
+            m_WacomRaw = WacomRawReader::open();
         }
     }
     else {
@@ -436,21 +483,13 @@ void SdlInputHandler::removeNativePenHook()
 
     delete (WacomRawReader*)m_WacomRaw;
     m_WacomRaw = nullptr;
-    delete (WintabReader*)m_Wintab;
+    delete (WintabPen*)m_Wintab;
     m_Wintab = nullptr;
 }
 
 bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, uintptr_t wParam)
 {
     HWND hwnd = (HWND)hwndPtr;
-    auto wt = (WintabReader*)m_Wintab;
-    if (msg == wintab::WT_PACKET) {
-        if (wt != nullptr) {
-            wt->onPacket(wParam);
-        }
-        return true;
-    }
-
     UINT32 pointerId = GET_POINTERID_WPARAM(wParam);
 
     POINTER_INPUT_TYPE pointerType;
@@ -471,10 +510,6 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         // No press-and-hold rings or tap ripples on top of the stream
         disableTouchFeedback();
         m_DisabledTouchFeedback = true;
-    }
-
-    if (msg == WM_POINTERENTER && wt != nullptr) {
-        wt->bringToTop();
     }
 
     if (msg == WM_POINTERCAPTURECHANGED) {
@@ -582,18 +617,9 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             pressureOrDistance = qMin(pen.pressure / 1024.0f, 1.0f);
         }
 
-        // Wintab, when current, gives the tablet's full pressure range (any model)
-        auto raw = (WacomRawReader*)m_WacomRaw;
-        bool rawFresh = raw != nullptr && raw->fresh();
-        if (!rawFresh && wt != nullptr && wt->fresh() && (flags & POINTER_FLAG_INCONTACT)) {
-            uint32_t wintabPressure = wt->pressure;
-            if (wintabPressure > 0) {
-                pressureOrDistance = qMin(wintabPressure / wt->maxPressure, 1.0f);
-            }
-        }
-
         // Raw Wacom state, when current, gives both barrel buttons (hovering too) and 8192 levels
-        if (rawFresh) {
+        auto raw = (WacomRawReader*)m_WacomRaw;
+        if (raw != nullptr && raw->fresh()) {
             uint8_t rawFlags = raw->flags;
             penButtons = ((rawFlags & WacomRawReader::k_FlagBarrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
                          ((rawFlags & WacomRawReader::k_FlagBarrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
@@ -610,20 +636,11 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             }
         }
 
-        // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth.
-        // This is the exact inverse of the host-side conversion in Sunshine/Apollo.
+        // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth
         uint16_t rotation = LI_ROT_UNKNOWN;
         uint8_t tilt = LI_TILT_UNKNOWN;
         if ((pen.penMask & PEN_MASK_TILT_X) && (pen.penMask & PEN_MASK_TILT_Y)) {
-            double a = std::tan(pen.tiltX * k_Pi / 180.0);
-            double b = std::tan(pen.tiltY * k_Pi / 180.0);
-            double tiltDeg = std::atan(std::sqrt(a * a + b * b)) * 180.0 / k_Pi;
-            double azimuth = std::atan2(-a, b) * 180.0 / k_Pi;
-            if (azimuth < 0) {
-                azimuth += 360.0;
-            }
-            tilt = (uint8_t)qMin(90L, std::lround(tiltDeg));
-            rotation = (uint16_t)(std::lround(azimuth) % 360);
+            tiltXYToProtocol(pen.tiltX, pen.tiltY, rotation, tilt);
         }
 
         LiSendPenEvent(eventType, toolType, penButtons, m_LastPenX, m_LastPenY, pressureOrDistance,
@@ -637,7 +654,7 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         }
     }
     s_Stats.messages++;
-    logPenStats((WacomRawReader*)m_WacomRaw, wt);
+    logPenStats((WacomRawReader*)m_WacomRaw, (WintabPen*)m_Wintab);
 
     return true;
 }
@@ -678,11 +695,170 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     return true;
 }
 
+bool SdlInputHandler::handleWintabMessage(void* hwndPtr, unsigned int msg, uintptr_t wParam, intptr_t lParam)
+{
+    auto wt = (WintabPen*)m_Wintab;
+    if (wt == nullptr) {
+        return false;
+    }
+    HWND hwnd = (HWND)hwndPtr;
+    bool hostPen = (LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) != 0;
+
+    if (msg == wintab::WT_PROXIMITY) {
+        bool entering = LOWORD(lParam) != 0;
+        if (!entering && hostPen) {
+            if (wt->contact) {
+                LiSendPenEvent(LI_TOUCH_EVENT_UP, LI_TOOL_TYPE_PEN, 0, m_LastPenX, m_LastPenY, 0.0f,
+                               0.0f, 0.0f, LI_ROT_UNKNOWN, LI_TILT_UNKNOWN);
+            }
+            if (wt->inside) {
+                LiSendPenEvent(LI_TOUCH_EVENT_HOVER_LEAVE, LI_TOOL_TYPE_PEN, 0, m_LastPenX, m_LastPenY, 0.0f,
+                               0.0f, 0.0f, LI_ROT_UNKNOWN, LI_TILT_UNKNOWN);
+            }
+        }
+        if (!entering) {
+            wt->contact = wt->inside = false;
+        }
+        wt->inProximity = entering;
+        return true;
+    }
+
+    // WT_PACKET
+    wintab::PACKET packet;
+    if (!wt->fnPacket(wt->ctx, (UINT)wParam, &packet)) {
+        return true;
+    }
+    wt->packetCount++;
+    wt->lastPacketMs = GetTickCount64();
+    wt->inProximity = !(packet.status & wintab::TPS_PROXIMITY);
+    if (!hostPen) {
+        return true;  // the driver's mouse input goes to the host as usual
+    }
+    if (!wt->loggedFirst) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using Wintab for the pen");
+        wt->loggedFirst = true;
+    }
+
+    // Position: the cursor, which the driver moves along its screen mapping (physical pixels:
+    // Moonlight is per-monitor DPI aware)
+    POINT cursor;
+    POINT clientOrigin = {};
+    RECT clientRect;
+    GetCursorPos(&cursor);
+    ClientToScreen(hwnd, &clientOrigin);
+    GetClientRect(hwnd, &clientRect);
+    if (clientRect.right <= 0 || clientRect.bottom <= 0) {
+        return true;
+    }
+    bool inside = cursor.x >= clientOrigin.x && cursor.x < clientOrigin.x + clientRect.right &&
+                  cursor.y >= clientOrigin.y && cursor.y < clientOrigin.y + clientRect.bottom;
+
+    // A stroke that leaves the window keeps going (clamped to the edge), like pointer capture
+    if (!inside && !wt->contact) {
+        if (wt->inside) {
+            LiSendPenEvent(LI_TOUCH_EVENT_HOVER_LEAVE, LI_TOOL_TYPE_PEN, 0, m_LastPenX, m_LastPenY, 0.0f,
+                           0.0f, 0.0f, LI_ROT_UNKNOWN, LI_TILT_UNKNOWN);
+            wt->inside = false;
+        }
+        return true;
+    }
+
+    SDL_Rect src, dst;
+    int windowWidth, windowHeight;
+    SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+    src.x = src.y = 0;
+    src.w = m_StreamWidth;
+    src.h = m_StreamHeight;
+    dst.x = dst.y = 0;
+    dst.w = windowWidth;
+    dst.h = windowHeight;
+    StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+
+    float windowX = (float)(cursor.x - clientOrigin.x) * windowWidth / clientRect.right;
+    float windowY = (float)(cursor.y - clientOrigin.y) * windowHeight / clientRect.bottom;
+    float vidrelx = qMin(qMax(windowX, (float)dst.x), (float)(dst.x + dst.w)) - dst.x;
+    float vidrely = qMin(qMax(windowY, (float)dst.y), (float)(dst.y + dst.h)) - dst.y;
+    m_LastPenX = vidrelx / dst.w;
+    m_LastPenY = vidrely / dst.h;
+
+    bool contact = wt->inProximity && (packet.normalPressure > 0 || (packet.buttons & 0x1));
+    uint8_t eventType;
+    if (contact) {
+        eventType = wt->contact ? LI_TOUCH_EVENT_MOVE : LI_TOUCH_EVENT_DOWN;
+    }
+    else if (wt->contact) {
+        eventType = LI_TOUCH_EVENT_UP;
+    }
+    else if (wt->inProximity) {
+        eventType = LI_TOUCH_EVENT_HOVER;
+    }
+    else {
+        eventType = LI_TOUCH_EVENT_HOVER_LEAVE;
+    }
+
+    uint8_t toolType = (packet.status & wintab::TPS_INVERT) ? LI_TOOL_TYPE_ERASER : LI_TOOL_TYPE_PEN;
+    // Pen buttons: 0 tip, 1 lower side switch, 2 upper side switch
+    uint8_t penButtons = ((packet.buttons & 0x2) ? LI_PEN_BUTTON_PRIMARY : 0) |
+                         ((packet.buttons & 0x4) ? LI_PEN_BUTTON_SECONDARY : 0);
+
+    // Contact: pressure 0..1 at the tablet's full resolution; hover distance isn't known (0.0)
+    float pressureOrDistance = contact ? qMin(packet.normalPressure / wt->maxPressure, 1.0f) : 0.0f;
+
+    // Tilt: altitude/azimuth to Windows' X/Y tilt (as Qt's Wintab support does), then as Ink
+    uint16_t rotation = LI_ROT_UNKNOWN;
+    uint8_t tilt = LI_TILT_UNKNOWN;
+    double altitude = std::abs(packet.orientation.orAltitude) / 10.0;
+    if (altitude > 0.0 && altitude < 90.0) {
+        double azimuth = packet.orientation.orAzimuth / 10.0 * k_Pi / 180.0;
+        double tanAltitude = std::tan(altitude * k_Pi / 180.0);
+        double tiltX = std::atan(std::sin(azimuth) / tanAltitude) * 180.0 / k_Pi;
+        double tiltY = -std::atan(std::cos(azimuth) / tanAltitude) * 180.0 / k_Pi;
+        tiltXYToProtocol(tiltX, tiltY, rotation, tilt);
+    }
+    else if (altitude >= 90.0) {
+        rotation = 0;
+        tilt = 0;
+    }
+
+    LiSendPenEvent(eventType, toolType, penButtons, m_LastPenX, m_LastPenY, pressureOrDistance,
+                   0.0f, 0.0f, rotation, tilt);
+    wt->contact = contact;
+    wt->inside = inside || contact;
+
+    s_Stats.sent++;
+    if (contact) {
+        s_Stats.contactSamples++;
+    }
+    s_Stats.messages++;
+    logPenStats((WacomRawReader*)m_WacomRaw, wt);
+    return true;
+}
+
+bool SdlInputHandler::handleWintabMouse(unsigned int msg)
+{
+    auto wt = (WintabPen*)m_Wintab;
+    if (wt == nullptr) {
+        return false;
+    }
+
+    // The cursor over this window: packets come here (at most every 100 ms, it's a driver call)
+    static uint64_t lastOverlapMs = 0;
+    if (msg == WM_MOUSEMOVE && GetTickCount64() - lastOverlapMs > 100) {
+        wt->bringToTop();
+        lastOverlapMs = GetTickCount64();
+    }
+
+    // The driver's mouse input for the pen: the pen already sends it to the host
+    return (LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) && wt->ownsMouse();
+}
+
 #else
 
 void SdlInputHandler::installNativePenHook() {}
 void SdlInputHandler::removeNativePenHook() {}
 bool SdlInputHandler::handleNativePenMessage(void*, unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleNativePenMouseButton(unsigned int, uintptr_t) { return false; }
+bool SdlInputHandler::handleWintabMessage(void*, unsigned int, uintptr_t, intptr_t) { return false; }
+bool SdlInputHandler::handleWintabMouse(unsigned int) { return false; }
 
 #endif

@@ -1376,6 +1376,40 @@ Flickable {
                 anchors.fill: parent
                 spacing: 5
 
+                Label {
+                    width: parent.width
+                    id: penInputModeTitle
+                    text: qsTr("Pen input")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                    visible: Qt.platform.os === "windows"
+                }
+
+                AutoResizingComboBox {
+                    // ignore setting the index at first, and actually set it when the component is loaded
+                    Component.onCompleted: {
+                        currentIndex = Math.max(0, Math.min(2, StreamingPreferences.penInputMode))
+                    }
+
+                    id: penInputModeComboBox
+                    visible: Qt.platform.os === "windows"
+                    textRole: "text"
+                    model: ListModel {
+                        ListElement { text: qsTr("Automatic") }
+                        ListElement { text: qsTr("Windows Ink (raw Wacom data for the Cintiq 22)") }
+                        ListElement { text: qsTr("Wintab (full pressure range, any tablet)") }
+                    }
+                    // ::onActivated must be used, as it only listens for when the index is changed by a human
+                    onActivated : {
+                        StreamingPreferences.penInputMode = currentIndex
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 8000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("How Moonlight reads your pen. Windows Ink works with every pen but gives 1024 pressure levels (8192 on a Cintiq 22 through its raw data). Wintab gives the tablet's full pressure range, tilt and buttons through the tablet driver. Applies from the next stream.")
+                }
+
                 CheckBox {
                     id: immersiveModeCheck
                     hoverEnabled: true

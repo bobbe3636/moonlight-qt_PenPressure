@@ -54,6 +54,7 @@
 #define SER_EXTRASCREENS "extrascreens"
 #define SER_EXTRASCREENSHALFBITRATE "extrascreenshalfbitrate"
 #define SER_IMMERSIVEMODE "immersivemode"
+#define SER_PENINPUTMODE "peninputmode"
 #define SER_STREAMMENUBUTTON "streammenubutton"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
@@ -160,6 +161,7 @@ void StreamingPreferences::reload()
     extraScreensHalfBitrate = settings.value(SER_EXTRASCREENSHALFBITRATE, false).toBool();
     m_LoadedExtraScreensHalfBitrate = extraScreensHalfBitrate;
     immersiveMode = settings.value(SER_IMMERSIVEMODE, false).toBool();
+    penInputMode = qBound(0, settings.value(SER_PENINPUTMODE, 0).toInt(), 2);
     showStreamMenuButton = settings.value(SER_STREAMMENUBUTTON, true).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
@@ -380,6 +382,7 @@ void StreamingPreferences::save()
         m_LoadedExtraScreensHalfBitrate = extraScreensHalfBitrate;
     }
     settings.setValue(SER_IMMERSIVEMODE, immersiveMode);
+    settings.setValue(SER_PENINPUTMODE, penInputMode);
     settings.setValue(SER_STREAMMENUBUTTON, showStreamMenuButton);
 
     if (m_Companion) {

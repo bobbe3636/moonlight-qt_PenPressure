@@ -99,6 +99,11 @@ public:
     // and we'd otherwise drop. Returns true if consumed.
     bool handleNativePenMouseButton(unsigned int msg, uintptr_t wParam);
 
+    // Wintab pen mode: packets and proximity from the tablet driver, and the driver's mouse
+    // input for the pen (dropped: the pen already goes to the host)
+    bool handleWintabMessage(void* hwnd, unsigned int msg, uintptr_t wParam, intptr_t lParam);
+    bool handleWintabMouse(unsigned int msg);
+
     void handleKeyEvent(SDL_KeyboardEvent* event);
 
     void handleMouseButtonEvent(SDL_MouseButtonEvent* event);
@@ -288,7 +293,8 @@ private:
     bool m_DisabledTouchFeedback;
     void* m_NativePenHwnd;
     void* m_WacomRaw; // raw Wacom report reader (pen.cpp), for barrel buttons and full pressure
-    void* m_Wintab; // Wintab reader (pen.cpp): full pressure range for any tablet with a Wintab driver
+    void* m_Wintab; // Wintab pen (pen.cpp): the whole pen from Wintab, full pressure range for any tablet
+    int m_PenInputMode; // StreamingPreferences::penInputMode
     bool m_NativePenLogged;
     float m_LastPenX;
     float m_LastPenY;
