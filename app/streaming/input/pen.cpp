@@ -411,7 +411,12 @@ void SdlInputHandler::installNativePenHook()
         if (qEnvironmentVariableIntValue("MOONLIGHT_PEN_NO_RAW") == 0) {
             m_WacomRaw = WacomRawReader::open();
         }
-        m_Wintab = WintabReader::open(info.info.win.window);
+        // Off by default: while a Wintab context is open, Wacom's driver stops sending this
+        // window Windows Ink pen messages (the pen becomes a mouse), which this path needs.
+        // MOONLIGHT_PEN_WINTAB=1 turns it on for experiments.
+        if (qEnvironmentVariableIntValue("MOONLIGHT_PEN_WINTAB") != 0) {
+            m_Wintab = WintabReader::open(info.info.win.window);
+        }
     }
     else {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
