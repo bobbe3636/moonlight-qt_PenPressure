@@ -8,6 +8,8 @@
 #include "SDL_compat.h"
 #include <SDL_syswm.h>
 #include "utils.h"
+#include "path.h"
+#include <QDir>
 
 #ifdef HAVE_FFMPEG
 #include "video/ffmpeg.h"
@@ -2499,6 +2501,10 @@ void Session::startCompanionScreen(int screen)
 #endif
 
     auto process = new QProcess();
+    // Its log goes to its own file (a redirected Moonlight logs to stderr): readable, and its
+    // output can't fill a pipe nobody reads, which would block the companion
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    process->setStandardOutputFile(QDir(Path::getLogDir()).filePath(QString("Moonlight-screen%1.log").arg(screen)));
     process->start(QCoreApplication::applicationFilePath(), args);
     m_CompanionProcesses.append(process);
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Started companion window for screen %d (port %d)",
