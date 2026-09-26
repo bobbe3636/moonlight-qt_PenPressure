@@ -153,6 +153,8 @@ public:
     bool isLocalCursorVisible() { return m_InputHandler != nullptr && m_InputHandler->isLocalCursorVisible(); }
     bool isCursorLocked() { return m_InputHandler != nullptr && m_InputHandler->isPointerRegionLockActive(); }
     bool isSystemKeysCaptured() { return m_InputHandler != nullptr && m_InputHandler->isSystemKeyCaptureActive(); }
+    bool isKeyboardImmersive() { return m_InputHandler != nullptr && m_InputHandler->isKeyboardImmersive(); }
+    void toggleKeyboardImmersive();
     int streamWidth() const { return m_StreamConfig.width; }
     int streamHeight() const { return m_StreamConfig.height; }
     void reconnectWithResolution(int width, int height);

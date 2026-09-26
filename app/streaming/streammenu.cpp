@@ -379,10 +379,10 @@ private:
         separator(menu);
 
         add(menu, CmdImmersive, "Immersive mode (capture mouse)" + key + "M", m_Session->isImmersive());
+        add(menu, CmdSystemKeys, "Keyboard immersive mode (Alt+Tab, Win key to the stream)" + key + "K", m_Session->isKeyboardImmersive());
         add(menu, CmdReleaseInput, "Release mouse and keyboard" + key + "Z");
         add(menu, CmdCursor, "Show local cursor" + key + "C", m_Session->isLocalCursorVisible());
         add(menu, CmdLockCursor, "Lock cursor to window" + key + "L", m_Session->isCursorLocked());
-        add(menu, CmdSystemKeys, "Capture system keys" + key + "K", m_Session->isSystemKeysCaptured());
         add(menu, CmdPaste, "Paste clipboard as text" + key + "V");
         add(menu, CmdCtrlAltDel, "Send Ctrl+Alt+Del");
         separator(menu);
@@ -463,7 +463,7 @@ private:
         case CmdReleaseInput:   m_Session->runShortcutCommand('Z'); break;
         case CmdCursor:         m_Session->runShortcutCommand('C'); break;
         case CmdLockCursor:     m_Session->runShortcutCommand('L'); break;
-        case CmdSystemKeys:     m_Session->runShortcutCommand('K'); break;
+        case CmdSystemKeys:     m_Session->toggleKeyboardImmersive(); break;
         case CmdPaste:          m_Session->runShortcutCommand('V'); break;
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
         case CmdHideButton:     toggle(); break;

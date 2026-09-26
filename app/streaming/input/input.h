@@ -160,6 +160,10 @@ public:
 
     bool isPointerRegionLockActive() const { return m_PointerRegionLockActive; }
 
+    // Keyboard immersive mode: system shortcuts (Alt+Tab, Win...) go to the host whenever the
+    // stream window has focus, windowed or fullscreen
+    bool isKeyboardImmersive() const { return m_CaptureSystemKeysMode == StreamingPreferences::CSK_ALWAYS; }
+
     bool isSystemKeyCaptureActive();
 
     void setCaptureActive(bool active);

@@ -2509,6 +2509,20 @@ void Session::toggleImmersive()
     m_Preferences->save();
 }
 
+void Session::toggleKeyboardImmersive()
+{
+    if (m_InputHandler == nullptr) {
+        return;
+    }
+
+    // Ctrl+Alt+Shift+K switches between "always capture system keys" and off; make sure the
+    // result is "always" (not fullscreen-only) when turning it on, and remember it
+    runShortcutCommand('K');
+    m_Preferences->captureSysKeysMode = m_InputHandler->isKeyboardImmersive()
+            ? StreamingPreferences::CSK_ALWAYS : StreamingPreferences::CSK_OFF;
+    m_Preferences->save();
+}
+
 int Session::extraScreenCount() const
 {
     return m_CompanionProcesses.size();

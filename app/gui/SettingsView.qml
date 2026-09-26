@@ -1423,7 +1423,7 @@ Flickable {
                     CheckBox {
                         id: captureSysKeysCheck
                         hoverEnabled: true
-                        text: qsTr("Capture system keyboard shortcuts")
+                        text: qsTr("Keyboard immersive mode (Alt+Tab, Win key and other shortcuts go to the stream)")
                         font.pointSize: 12
                         enabled: SystemProperties.hasDesktopEnvironment
                         checked: StreamingPreferences.captureSysKeysMode !== StreamingPreferences.CSK_OFF || !SystemProperties.hasDesktopEnvironment
