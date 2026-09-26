@@ -9,8 +9,8 @@ const QVector<Action>& actions()
     static const QVector<Action> list {
         { "menu_button",        "Show / hide the menu button",        "Ctrl+Alt+Shift+B" },
         { "fullscreen_toggle",  "Switch fullscreen / windowed",       "Ctrl+Alt+Shift+X" },
-        { "fullscreen",         "Go fullscreen",                      "Ctrl+Alt+Shift+F" },
-        { "windowed",           "Go windowed",                        "Ctrl+Alt+Shift+W" },
+        { "fullscreen",         "Go fullscreen",                      "" },
+        { "windowed",           "Go windowed",                        "" },
         { "minimize",           "Minimize",                           "Ctrl+Alt+Shift+D" },
         { "metrics",            "Show / hide metrics",                "Ctrl+Alt+Shift+S" },
         { "immersive",          "Immersive mode (capture mouse)",     "Ctrl+Alt+Shift+M" },
