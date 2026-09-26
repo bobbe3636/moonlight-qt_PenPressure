@@ -270,7 +270,9 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
     if (GetPointerInfo(pointerId, &pointerInfo) && pointerInfo.historyCount > 1) {
         count = pointerInfo.historyCount;
     }
-    std::vector<POINTER_PEN_INFO> samples(count);
+    // Reused across messages (pen input arrives at hundreds of messages per second)
+    static std::vector<POINTER_PEN_INFO> samples;
+    samples.resize(count);
     if (!GetPointerPenInfoHistory(pointerId, &count, samples.data())) {
         count = 1;
         if (!GetPointerPenInfo(pointerId, &samples[0])) {
