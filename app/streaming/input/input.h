@@ -288,6 +288,7 @@ private:
     bool m_DisabledTouchFeedback;
     void* m_NativePenHwnd;
     void* m_WacomRaw; // raw Wacom report reader (pen.cpp), for barrel buttons and full pressure
+    void* m_Wintab; // Wintab reader (pen.cpp): full pressure range for any tablet with a Wintab driver
     bool m_NativePenLogged;
     float m_LastPenX;
     float m_LastPenY;

@@ -167,6 +167,160 @@ struct WacomRawReader
     }
 };
 
+// Wintab.
+//
+// The tablet driver's own pen API (Wacom's, and most other makers ship one too) reports the
+// tablet's full pressure range for any model, where Windows Ink stops at 1024 levels. We read
+// only pressure from it; position, tilt and buttons keep coming from WM_POINTER. Wintab32.dll
+// is loaded at runtime, so nothing changes where there's no Wintab driver.
+//
+// Wintab delivers packets to one context at a time (the top of its overlap order): the stream
+// window the pen enters brings its context to the top, so with several screens' windows the
+// one under the pen gets the pressure.
+
+namespace wintab {
+    DECLARE_HANDLE(HCTX);
+    typedef DWORD WTPKT;
+    typedef DWORD FIX32;
+
+    constexpr UINT WTI_DEFCONTEXT = 3;
+    constexpr UINT WTI_DEVICES = 100;
+    constexpr UINT DVC_NPRESSURE = 15;
+    constexpr UINT CXO_MESSAGES = 0x0004;
+    constexpr WTPKT PK_STATUS = 0x0002;
+    constexpr WTPKT PK_TIME = 0x0004;
+    constexpr WTPKT PK_NORMAL_PRESSURE = 0x0400;
+    constexpr UINT WT_DEFBASE = 0x7FF0;
+    constexpr UINT WT_PACKET = WT_DEFBASE;
+
+    struct AXIS {
+        LONG axMin;
+        LONG axMax;
+        UINT axUnits;
+        FIX32 axResolution;
+    };
+
+    struct LOGCONTEXTW {
+        WCHAR lcName[40];
+        UINT lcOptions, lcStatus, lcLocks, lcMsgBase, lcDevice, lcPktRate;
+        WTPKT lcPktData, lcPktMode, lcMoveMask;
+        DWORD lcBtnDnMask, lcBtnUpMask;
+        LONG lcInOrgX, lcInOrgY, lcInOrgZ, lcInExtX, lcInExtY, lcInExtZ;
+        LONG lcOutOrgX, lcOutOrgY, lcOutOrgZ, lcOutExtX, lcOutExtY, lcOutExtZ;
+        FIX32 lcSensX, lcSensY, lcSensZ;
+        BOOL lcSysMode;
+        int lcSysOrgX, lcSysOrgY, lcSysExtX, lcSysExtY;
+        FIX32 lcSysSensX, lcSysSensY;
+    };
+
+    // Fields in the order of their PK_ bits: PK_STATUS, PK_TIME, PK_NORMAL_PRESSURE
+    struct PACKET {
+        UINT status;
+        DWORD time;
+        UINT normalPressure;
+    };
+}
+
+struct WintabReader
+{
+    HMODULE dll = nullptr;
+    wintab::HCTX ctx = nullptr;
+    float maxPressure = 1023.0f;
+    std::atomic<uint32_t> pressure { 0 };
+    std::atomic<uint64_t> lastPacketMs { 0 };
+    std::atomic<uint32_t> packetCount { 0 };  // for the pen statistics log line
+    bool seenPacket = false;
+
+    UINT (WINAPI* fnInfo)(UINT, UINT, LPVOID) = nullptr;
+    wintab::HCTX (WINAPI* fnOpen)(HWND, wintab::LOGCONTEXTW*, BOOL) = nullptr;
+    BOOL (WINAPI* fnClose)(wintab::HCTX) = nullptr;
+    BOOL (WINAPI* fnPacket)(wintab::HCTX, UINT, LPVOID) = nullptr;
+    BOOL (WINAPI* fnOverlap)(wintab::HCTX, BOOL) = nullptr;
+
+    // Only trust pressure that is current
+    bool fresh() const
+    {
+        return seenPacket && GetTickCount64() - lastPacketMs < 100;
+    }
+
+    static WintabReader* open(HWND hwnd)
+    {
+        HMODULE dll = LoadLibraryW(L"Wintab32.dll");
+        if (dll == nullptr) {
+            return nullptr;
+        }
+
+        auto reader = new WintabReader();
+        reader->dll = dll;
+        reader->fnInfo = (decltype(fnInfo))GetProcAddress(dll, "WTInfoW");
+        reader->fnOpen = (decltype(fnOpen))GetProcAddress(dll, "WTOpenW");
+        reader->fnClose = (decltype(fnClose))GetProcAddress(dll, "WTClose");
+        reader->fnPacket = (decltype(fnPacket))GetProcAddress(dll, "WTPacket");
+        reader->fnOverlap = (decltype(fnOverlap))GetProcAddress(dll, "WTOverlap");
+        if (!reader->fnInfo || !reader->fnOpen || !reader->fnClose || !reader->fnPacket || !reader->fnOverlap ||
+                reader->fnInfo(0, 0, nullptr) == 0) {
+            // No Wintab service running (e.g. the driver's Wintab is off)
+            delete reader;
+            return nullptr;
+        }
+
+        wintab::AXIS pressureAxis = {};
+        if (reader->fnInfo(wintab::WTI_DEVICES, wintab::DVC_NPRESSURE, &pressureAxis) && pressureAxis.axMax > 0) {
+            reader->maxPressure = (float)pressureAxis.axMax;
+        }
+
+        // A digitizing context (not a system one: the driver keeps moving the cursor) that
+        // posts WT_PACKET to the stream window with just the pressure
+        wintab::LOGCONTEXTW lc = {};
+        if (!reader->fnInfo(wintab::WTI_DEFCONTEXT, 0, &lc)) {
+            delete reader;
+            return nullptr;
+        }
+        wcscpy_s(lc.lcName, L"Moonlight pen pressure");
+        lc.lcOptions |= wintab::CXO_MESSAGES;
+        lc.lcMsgBase = wintab::WT_DEFBASE;
+        lc.lcPktData = wintab::PK_STATUS | wintab::PK_TIME | wintab::PK_NORMAL_PRESSURE;
+        lc.lcPktMode = 0;  // absolute
+        lc.lcMoveMask = wintab::PK_NORMAL_PRESSURE;
+        reader->ctx = reader->fnOpen(hwnd, &lc, TRUE);
+        if (reader->ctx == nullptr) {
+            delete reader;
+            return nullptr;
+        }
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Wintab available: %.0f pressure levels", reader->maxPressure + 1);
+        return reader;
+    }
+
+    void onPacket(WPARAM serial)
+    {
+        wintab::PACKET packet;
+        if (fnPacket(ctx, (UINT)serial, &packet)) {
+            pressure = packet.normalPressure;
+            lastPacketMs = GetTickCount64();
+            packetCount++;
+            if (!seenPacket) {
+                seenPacket = true;
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using Wintab for pen pressure");
+            }
+        }
+    }
+
+    // The pen entered this window: its context gets the packets from now on
+    void bringToTop()
+    {
+        fnOverlap(ctx, TRUE);
+    }
+
+    ~WintabReader()
+    {
+        if (ctx != nullptr) {
+            fnClose(ctx);
+        }
+        FreeLibrary(dll);
+    }
+};
+
 // Pen statistics, logged every 2 s while the pen is active ("Pen stats: ..."), to see how
 // evenly and how often samples leave this PC. Only touched on the UI thread.
 static struct {
@@ -174,10 +328,10 @@ static struct {
     uint64_t lastMessage = 0;
     uint32_t maxGapMs = 0;
     uint32_t messages = 0, sent = 0, contactSamples = 0, sharedPressure = 0;
-    uint32_t rawAtStart = 0;
+    uint32_t rawAtStart = 0, wintabAtStart = 0;
 } s_Stats;
 
-static void logPenStats(WacomRawReader* raw)
+static void logPenStats(WacomRawReader* raw, WintabReader* wt)
 {
     uint64_t now = GetTickCount64();
     if (s_Stats.lastMessage != 0 && now - s_Stats.lastMessage < 500) {
@@ -187,6 +341,7 @@ static void logPenStats(WacomRawReader* raw)
     if (s_Stats.windowStart == 0) {
         s_Stats.windowStart = now;
         s_Stats.rawAtStart = raw != nullptr ? raw->reportCount.load() : 0;
+        s_Stats.wintabAtStart = wt != nullptr ? wt->packetCount.load() : 0;
         return;
     }
 
@@ -195,11 +350,12 @@ static void logPenStats(WacomRawReader* raw)
         return;
     }
     uint32_t rawReports = raw != nullptr ? raw->reportCount.load() - s_Stats.rawAtStart : 0;
+    uint32_t wintabPackets = wt != nullptr ? wt->packetCount.load() - s_Stats.wintabAtStart : 0;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                "Pen stats: %.0f messages/s, %.0f samples sent/s, raw tablet %.0f reports/s, "
-                "max gap %u ms, %u/%u contact samples used the latest raw pressure",
+                "Pen stats: %.0f messages/s, %.0f samples sent/s, raw tablet %.0f reports/s, Wintab %.0f packets/s, "
+                "max gap %u ms, %u/%u contact samples used the latest raw/Wintab pressure",
                 s_Stats.messages * 1000.0 / elapsed, s_Stats.sent * 1000.0 / elapsed,
-                rawReports * 1000.0 / elapsed, s_Stats.maxGapMs,
+                rawReports * 1000.0 / elapsed, wintabPackets * 1000.0 / elapsed, s_Stats.maxGapMs,
                 s_Stats.sharedPressure, s_Stats.contactSamples);
     s_Stats = {};
 }
@@ -214,6 +370,7 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     case WM_POINTERUP:
     case WM_POINTERUPDATE:
     case WM_POINTERCAPTURECHANGED:
+    case wintab::WT_PACKET:
         if (((SdlInputHandler*)refData)->handleNativePenMessage(hwnd, msg, wParam)) {
             return 0;
         }
@@ -250,7 +407,11 @@ void SdlInputHandler::installNativePenHook()
 
     if (SetWindowSubclass(info.info.win.window, penSubclassProc, k_PenSubclassId, (DWORD_PTR)this)) {
         m_NativePenHwnd = info.info.win.window;
-        m_WacomRaw = WacomRawReader::open();
+        // MOONLIGHT_PEN_NO_RAW=1 skips the raw Wacom reader (to try Wintab on a supported model)
+        if (qEnvironmentVariableIntValue("MOONLIGHT_PEN_NO_RAW") == 0) {
+            m_WacomRaw = WacomRawReader::open();
+        }
+        m_Wintab = WintabReader::open(info.info.win.window);
     }
     else {
         SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -270,11 +431,21 @@ void SdlInputHandler::removeNativePenHook()
 
     delete (WacomRawReader*)m_WacomRaw;
     m_WacomRaw = nullptr;
+    delete (WintabReader*)m_Wintab;
+    m_Wintab = nullptr;
 }
 
 bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, uintptr_t wParam)
 {
     HWND hwnd = (HWND)hwndPtr;
+    auto wt = (WintabReader*)m_Wintab;
+    if (msg == wintab::WT_PACKET) {
+        if (wt != nullptr) {
+            wt->onPacket(wParam);
+        }
+        return true;
+    }
+
     UINT32 pointerId = GET_POINTERID_WPARAM(wParam);
 
     POINTER_INPUT_TYPE pointerType;
@@ -295,6 +466,10 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         // No press-and-hold rings or tap ripples on top of the stream
         disableTouchFeedback();
         m_DisabledTouchFeedback = true;
+    }
+
+    if (msg == WM_POINTERENTER && wt != nullptr) {
+        wt->bringToTop();
     }
 
     if (msg == WM_POINTERCAPTURECHANGED) {
@@ -402,9 +577,18 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             pressureOrDistance = qMin(pen.pressure / 1024.0f, 1.0f);
         }
 
-        // Raw Wacom state, when current, gives both barrel buttons (hovering too) and 8192 levels
+        // Wintab, when current, gives the tablet's full pressure range (any model)
         auto raw = (WacomRawReader*)m_WacomRaw;
-        if (raw != nullptr && raw->fresh()) {
+        bool rawFresh = raw != nullptr && raw->fresh();
+        if (!rawFresh && wt != nullptr && wt->fresh() && (flags & POINTER_FLAG_INCONTACT)) {
+            uint32_t wintabPressure = wt->pressure;
+            if (wintabPressure > 0) {
+                pressureOrDistance = qMin(wintabPressure / wt->maxPressure, 1.0f);
+            }
+        }
+
+        // Raw Wacom state, when current, gives both barrel buttons (hovering too) and 8192 levels
+        if (rawFresh) {
             uint8_t rawFlags = raw->flags;
             penButtons = ((rawFlags & WacomRawReader::k_FlagBarrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
                          ((rawFlags & WacomRawReader::k_FlagBarrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
@@ -448,7 +632,7 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         }
     }
     s_Stats.messages++;
-    logPenStats((WacomRawReader*)m_WacomRaw);
+    logPenStats((WacomRawReader*)m_WacomRaw, wt);
 
     return true;
 }

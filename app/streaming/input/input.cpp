@@ -31,6 +31,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_DisabledTouchFeedback(false),
       m_NativePenHwnd(nullptr),
       m_WacomRaw(nullptr),
+      m_Wintab(nullptr),
       m_NativePenLogged(false),
       m_LastPenX(0.5f),
       m_LastPenY(0.5f),
