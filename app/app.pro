@@ -185,6 +185,7 @@ SOURCES += \
     settings/compatfetcher.cpp \
     settings/mappingfetcher.cpp \
     settings/streamingpreferences.cpp \
+    settings/shortcuts.cpp \
     streaming/input/abstouch.cpp \
     streaming/input/pen.cpp \
     streaming/streammenu.cpp \
@@ -229,6 +230,7 @@ HEADERS += \
     cli/quitstream.h \
     cli/startstream.h \
     settings/streamingpreferences.h \
+    settings/shortcuts.h \
     streaming/input/input.h \
     streaming/session.h \
     streaming/streammenu.h \

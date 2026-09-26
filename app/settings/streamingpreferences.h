@@ -20,6 +20,12 @@ public:
     // optionally half bitrate, for this session only (save() keeps the user's own values)
     void applyCompanionOverrides();
 
+    // Rebindable stream shortcuts (see settings/shortcuts.h), for the settings page
+    Q_INVOKABLE QVariantList shortcutActions() const;
+    Q_INVOKABLE QString shortcutBinding(const QString& id) const;
+    Q_INVOKABLE void setShortcutBinding(const QString& id, const QString& binding);
+    Q_INVOKABLE void resetShortcuts();
+
     void reload();
 
     enum AudioConfig

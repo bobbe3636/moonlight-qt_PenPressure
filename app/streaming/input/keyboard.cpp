@@ -1,4 +1,6 @@
 #include "streaming/session.h"
+#include "settings/shortcuts.h"
+#include "utils.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -12,6 +14,90 @@
 #define VK_F13 0x7C
 #define VK_NUMPAD0 0x60
 #endif
+
+namespace {
+
+// Which action (settings/shortcuts.h) each key combo is, and whether it needs a desktop
+const struct {
+    SdlInputHandler::KeyCombo combo;
+    const char* id;
+    char letter;  // the command letter the stream menu and session use
+    bool desktopOnly;
+} k_ComboActions[] = {
+    { SdlInputHandler::KeyComboQuit,                    "disconnect",         'Q', false },
+    { SdlInputHandler::KeyComboUngrabInput,             "release",            'Z', true },
+    { SdlInputHandler::KeyComboToggleFullScreen,        "fullscreen_toggle",  'X', true },
+    { SdlInputHandler::KeyComboToggleStatsOverlay,      "metrics",            'S', false },
+    { SdlInputHandler::KeyComboToggleMouseMode,         "immersive",          'M', false },
+    { SdlInputHandler::KeyComboToggleCursorHide,        "cursor",             'C', false },
+    { SdlInputHandler::KeyComboToggleMinimize,          "minimize",           'D', true },
+    { SdlInputHandler::KeyComboPasteText,               "paste",              'V', false },
+    { SdlInputHandler::KeyComboTogglePointerRegionLock, "lock_cursor",        'L', false },
+    { SdlInputHandler::KeyComboQuitAndExit,             "quit_exit",          'E', false },
+    { SdlInputHandler::KeyComboToggleKeyboardGrab,      "keyboard_immersive", 'K', true },
+    { SdlInputHandler::KeyComboToggleStreamMenu,        "menu_button",        'B', false },
+    { SdlInputHandler::KeyComboFullScreen,              "fullscreen",         'F', true },
+    { SdlInputHandler::KeyComboWindowed,                "windowed",           'W', true },
+    { SdlInputHandler::KeyComboCtrlAltDel,              "ctrl_alt_del",       0,   false },
+};
+
+int modifierGroups(Uint16 mod)
+{
+    int groups = 0;
+    if (mod & KMOD_CTRL) groups |= KMOD_CTRL;
+    if (mod & KMOD_ALT) groups |= KMOD_ALT;
+    if (mod & KMOD_SHIFT) groups |= KMOD_SHIFT;
+    if (mod & KMOD_GUI) groups |= KMOD_GUI;
+    return groups;
+}
+
+}
+
+void SdlInputHandler::loadShortcuts()
+{
+    for (const auto& action : k_ComboActions) {
+        auto& combo = m_SpecialKeyCombos[action.combo];
+        combo.keyCombo = action.combo;
+        combo.keyCode = SDLK_UNKNOWN;
+        combo.scanCode = SDL_SCANCODE_UNKNOWN;
+        combo.modifiers = 0;
+        combo.enabled = false;
+
+        // "Ctrl+Alt+Shift+X": modifiers, then an SDL key name (which may itself be "+")
+        QString binding = Shortcuts::binding(action.id).trimmed();
+        if (binding.isEmpty() || (action.desktopOnly && !WMUtils::isRunningDesktopEnvironment())) {
+            continue;
+        }
+        QString keyName;
+        QStringList modifiers;
+        if (binding.endsWith("++") || binding == "+") {
+            keyName = "+";
+            modifiers = binding.left(qMax(0, binding.size() - 2)).split('+', Qt::SkipEmptyParts);
+        }
+        else {
+            modifiers = binding.split('+');
+            keyName = modifiers.takeLast();
+        }
+        for (const QString& modifier : modifiers) {
+            if (modifier.compare("Ctrl", Qt::CaseInsensitive) == 0) combo.modifiers |= KMOD_CTRL;
+            else if (modifier.compare("Alt", Qt::CaseInsensitive) == 0) combo.modifiers |= KMOD_ALT;
+            else if (modifier.compare("Shift", Qt::CaseInsensitive) == 0) combo.modifiers |= KMOD_SHIFT;
+            else if (modifier.compare("Win", Qt::CaseInsensitive) == 0) combo.modifiers |= KMOD_GUI;
+        }
+
+        QByteArray name = keyName.toUtf8();
+        combo.keyCode = SDL_GetKeyFromName(name.constData());
+        combo.scanCode = SDL_GetScancodeFromName(name.constData());
+        if (combo.scanCode == SDL_SCANCODE_UNKNOWN && combo.keyCode != SDLK_UNKNOWN) {
+            combo.scanCode = SDL_GetScancodeFromKey(combo.keyCode);
+        }
+        combo.enabled = combo.keyCode != SDLK_UNKNOWN;
+        if (!combo.enabled) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Unknown key in shortcut '%s': %s",
+                        action.id, qPrintable(binding));
+        }
+    }
+}
 
 void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 {
@@ -174,6 +260,24 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         Session::get()->toggleStreamMenu();
         break;
 
+    case KeyComboFullScreen:
+    case KeyComboWindowed:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected %s combo", combo == KeyComboFullScreen ? "full-screen" : "windowed");
+        if (Session::s_ActiveSession->isFullScreen() != (combo == KeyComboFullScreen)) {
+            Session::s_ActiveSession->toggleFullscreen();
+            raiseAllKeys();
+        }
+        break;
+
+    case KeyComboCtrlAltDel:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected Ctrl+Alt+Del combo");
+        // The shortcut's own keys are still held on the host; release them first
+        raiseAllKeys();
+        Session::get()->sendCtrlAltDel();
+        break;
+
     default:
         Q_UNREACHABLE();
     }
@@ -181,9 +285,12 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
 
 void SdlInputHandler::runShortcutCommand(char letter)
 {
-    for (int i = 0; i < KeyComboMax; i++) {
-        if (m_SpecialKeyCombos[i].enabled && m_SpecialKeyCombos[i].keyCode == SDLK_a + (letter - 'A')) {
-            performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
+    // Commands from the stream menu work whatever the user bound them to (or if unbound)
+    for (const auto& action : k_ComboActions) {
+        if (action.letter == letter) {
+            if (!action.desktopOnly || WMUtils::isRunningDesktopEnvironment()) {
+                performSpecialKeyCombo(action.combo);
+            }
             return;
         }
     }
@@ -201,11 +308,9 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
         return;
     }
 
-    // Check for our special key combos
-    if ((event->state == SDL_PRESSED) &&
-            (event->keysym.mod & KMOD_CTRL) &&
-            (event->keysym.mod & KMOD_ALT) &&
-            (event->keysym.mod & KMOD_SHIFT)) {
+    // Check for our special key combos (exactly the bound modifiers plus the key)
+    if (event->state == SDL_PRESSED) {
+        int modifiers = modifierGroups(event->keysym.mod);
         // First we test the SDLK combos for matches,
         // that way we ensure that latin keyboard users
         // can match to the key they see on their keyboards.
@@ -218,14 +323,17 @@ void SdlInputHandler::handleKeyEvent(SDL_KeyboardEvent* event)
         // the scancode of another.
 
         for (int i = 0; i < KeyComboMax; i++) {
-            if (m_SpecialKeyCombos[i].enabled && event->keysym.sym == m_SpecialKeyCombos[i].keyCode) {
+            if (m_SpecialKeyCombos[i].enabled && m_SpecialKeyCombos[i].modifiers == modifiers &&
+                    event->keysym.sym == m_SpecialKeyCombos[i].keyCode) {
                 performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
                 return;
             }
         }
 
         for (int i = 0; i < KeyComboMax; i++) {
-            if (m_SpecialKeyCombos[i].enabled && event->keysym.scancode == m_SpecialKeyCombos[i].scanCode) {
+            if (m_SpecialKeyCombos[i].enabled && m_SpecialKeyCombos[i].modifiers == modifiers &&
+                    m_SpecialKeyCombos[i].scanCode != SDL_SCANCODE_UNKNOWN &&
+                    event->keysym.scancode == m_SpecialKeyCombos[i].scanCode) {
                 performSpecialKeyCombo(m_SpecialKeyCombos[i].keyCombo);
                 return;
             }

@@ -177,7 +177,7 @@ public:
     static
     QString getUnmappedGamepads();
 
-private:
+    // Stream shortcuts (public so the shortcut table in keyboard.cpp can name them)
     enum KeyCombo {
         KeyComboQuit,
         KeyComboUngrabInput,
@@ -191,8 +191,13 @@ private:
         KeyComboQuitAndExit,
         KeyComboToggleKeyboardGrab,
         KeyComboToggleStreamMenu,
+        KeyComboFullScreen,
+        KeyComboWindowed,
+        KeyComboCtrlAltDel,
         KeyComboMax
     };
+
+private:
 
     GamepadState*
     findStateForGamepad(SDL_JoystickID id);
@@ -258,8 +263,11 @@ private:
         KeyCombo keyCombo;
         SDL_Keycode keyCode;
         SDL_Scancode scanCode;
+        int modifiers;  // KMOD_CTRL/ALT/SHIFT/GUI groups that must be held, exactly
         bool enabled;
     } m_SpecialKeyCombos[KeyComboMax];
+
+    void loadShortcuts();
 
     SDL_TouchFingerEvent m_LastTouchDownEvent;
     SDL_TouchFingerEvent m_LastTouchUpEvent;

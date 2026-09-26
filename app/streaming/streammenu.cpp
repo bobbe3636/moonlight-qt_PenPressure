@@ -6,6 +6,7 @@
 
 #include "session.h"
 #include "settings/streamingpreferences.h"
+#include "settings/shortcuts.h"
 #include "SDL_compat.h"
 #include <SDL_syswm.h>
 
@@ -348,7 +349,8 @@ private:
             m_Session->runShortcutCommand('Z');
         }
 
-        const QString key = QStringLiteral("\tCtrl+Alt+Shift+");
+        // Each command shows its current (user-rebindable) shortcut
+        auto keyOf = [](const char* id) { return Shortcuts::menuSuffix(id); };
         HMENU menu = CreatePopupMenu();
 
         // Check marks show what's on; stream-wide state lives in the main window's session
@@ -356,9 +358,9 @@ private:
         bool soundOn = m_Companion ? !shared.value("streammenu/muted", false).toBool() : !m_Session->isAudioMuted();
         int screenCount = m_Companion ? shared.value("extrascreens", 0).toInt() + 1 : m_Session->extraScreenCount() + 1;
 
-        add(menu, CmdFullScreen, "Fullscreen" + key + "X", m_Session->isFullScreen());
-        add(menu, CmdMinimize, "Minimize" + key + "D");
-        add(menu, CmdMetrics, "Metrics" + key + "S", m_Session->isStatsOverlayVisible());
+        add(menu, CmdFullScreen, "Fullscreen" + keyOf("fullscreen_toggle"), m_Session->isFullScreen());
+        add(menu, CmdMinimize, "Minimize" + keyOf("minimize"));
+        add(menu, CmdMetrics, "Metrics" + keyOf("metrics"), m_Session->isStatsOverlayVisible());
         add(menu, CmdSound, "Sound", soundOn);
         separator(menu);
 
@@ -382,18 +384,18 @@ private:
         submenu(menu, resolutionMenu, "Resolution");
         separator(menu);
 
-        add(menu, CmdImmersive, "Immersive mode (capture mouse)" + key + "M", m_Session->isImmersive());
-        add(menu, CmdSystemKeys, "Keyboard immersive mode (Alt+Tab, Win key to the stream)" + key + "K", m_Session->isKeyboardImmersive());
-        add(menu, CmdReleaseInput, "Release mouse and keyboard" + key + "Z");
-        add(menu, CmdCursor, "Show local cursor" + key + "C", m_Session->isLocalCursorVisible());
-        add(menu, CmdLockCursor, "Lock cursor to window" + key + "L", m_Session->isCursorLocked());
-        add(menu, CmdPaste, "Paste clipboard as text" + key + "V");
-        add(menu, CmdCtrlAltDel, "Send Ctrl+Alt+Del");
+        add(menu, CmdImmersive, "Immersive mode (capture mouse)" + keyOf("immersive"), m_Session->isImmersive());
+        add(menu, CmdSystemKeys, "Keyboard immersive mode (Alt+Tab, Win key to the stream)" + keyOf("keyboard_immersive"), m_Session->isKeyboardImmersive());
+        add(menu, CmdReleaseInput, "Release mouse and keyboard" + keyOf("release"));
+        add(menu, CmdCursor, "Show local cursor" + keyOf("cursor"), m_Session->isLocalCursorVisible());
+        add(menu, CmdLockCursor, "Lock cursor to window" + keyOf("lock_cursor"), m_Session->isCursorLocked());
+        add(menu, CmdPaste, "Paste clipboard as text" + keyOf("paste"));
+        add(menu, CmdCtrlAltDel, QString("Send Ctrl+Alt+Del") + keyOf("ctrl_alt_del"));
         separator(menu);
 
-        add(menu, CmdHideButton, (canShowButton() ? "Hide this button" : "Show the menu button") + key + "B");
-        add(menu, CmdDisconnect, "Disconnect" + key + "Q");
-        add(menu, CmdQuitAppAndExit, "Quit app and exit Moonlight" + key + "E");
+        add(menu, CmdHideButton, (canShowButton() ? "Hide this button" : "Show the menu button") + keyOf("menu_button"));
+        add(menu, CmdDisconnect, "Disconnect" + keyOf("disconnect"));
+        add(menu, CmdQuitAppAndExit, "Quit app and exit Moonlight" + keyOf("quit_exit"));
 
         // The stream window owns the menu, so it keeps keyboard focus
         SetForegroundWindow(m_Parent);

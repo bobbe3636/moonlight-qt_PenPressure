@@ -1551,6 +1551,146 @@ Flickable {
         }
 
         GroupBox {
+            id: shortcutsGroupBox
+            width: (parent.width - (parent.leftPadding + parent.rightPadding))
+            padding: 12
+            title: "<font color=\"skyblue\">" + qsTr("Stream Shortcuts") + "</font>"
+            font.pointSize: 12
+
+            // Bumped on every change so all rows re-read their binding (a new binding can
+            // take a shortcut away from another action)
+            property int version: 0
+
+            // Key names match SDL's (SDL_GetKeyFromName); "" = not usable in a shortcut
+            function keyName(event) {
+                var k = event.key
+                if (k >= Qt.Key_A && k <= Qt.Key_Z) return String.fromCharCode(k)
+                if (k >= Qt.Key_0 && k <= Qt.Key_9) return String.fromCharCode(k)
+                // Shift+digit gives a symbol on most layouts: use the key's position instead
+                if (event.nativeScanCode >= 0x02 && event.nativeScanCode <= 0x0B)
+                    return event.nativeScanCode === 0x0B ? "0" : String.fromCharCode(0x30 + event.nativeScanCode - 1)
+                if (k >= Qt.Key_F1 && k <= Qt.Key_F24) return "F" + (k - Qt.Key_F1 + 1)
+                switch (k) {
+                case Qt.Key_Space: return "Space"
+                case Qt.Key_Return: case Qt.Key_Enter: return "Return"
+                case Qt.Key_Delete: return "Delete"
+                case Qt.Key_Insert: return "Insert"
+                case Qt.Key_Home: return "Home"
+                case Qt.Key_End: return "End"
+                case Qt.Key_PageUp: return "PageUp"
+                case Qt.Key_PageDown: return "PageDown"
+                case Qt.Key_Left: return "Left"
+                case Qt.Key_Right: return "Right"
+                case Qt.Key_Up: return "Up"
+                case Qt.Key_Down: return "Down"
+                case Qt.Key_Pause: return "Pause"
+                case Qt.Key_Print: return "PrintScreen"
+                case Qt.Key_ScrollLock: return "ScrollLock"
+                }
+                // Other printable keys (, . ; / ...) without Shift, which would change the symbol
+                if (k > 0x20 && k < 0x7F && !(event.modifiers & Qt.ShiftModifier)) return String.fromCharCode(k)
+                return ""
+            }
+
+            Column {
+                anchors.fill: parent
+                spacing: 5
+
+                Label {
+                    width: parent.width
+                    text: qsTr("Click a shortcut, then press the new keys. Esc cancels, Backspace removes the shortcut.")
+                    font.pointSize: 9
+                    wrapMode: Text.Wrap
+                }
+
+                Repeater {
+                    model: StreamingPreferences.shortcutActions()
+
+                    delegate: Row {
+                        width: parent.width
+                        spacing: 10
+
+                        Label {
+                            width: (parent.width - parent.spacing) * 0.55
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.label
+                            font.pointSize: 11
+                            wrapMode: Text.Wrap
+                        }
+
+                        Button {
+                            property bool capturing: false
+                            property string binding: shortcutsGroupBox.version >= 0 ? StreamingPreferences.shortcutBinding(modelData.id) : ""
+
+                            width: (parent.width - parent.spacing) * 0.45
+                            font.pointSize: 10
+                            text: capturing ? qsTr("Press keys…") : (binding === "" ? qsTr("None") : binding)
+                            highlighted: capturing
+
+                            onClicked: {
+                                capturing = true
+                                forceActiveFocus()
+                            }
+                            onActiveFocusChanged: {
+                                if (!activeFocus) {
+                                    capturing = false
+                                }
+                            }
+
+                            Keys.onPressed: function(event) {
+                                if (!capturing) {
+                                    return
+                                }
+                                event.accepted = true
+
+                                var k = event.key
+                                if (k === Qt.Key_Escape) {
+                                    capturing = false
+                                    return
+                                }
+                                if (k === Qt.Key_Backspace && event.modifiers === Qt.NoModifier) {
+                                    StreamingPreferences.setShortcutBinding(modelData.id, "")
+                                    capturing = false
+                                    shortcutsGroupBox.version++
+                                    return
+                                }
+                                // Wait for the key that goes with the modifiers
+                                if (k === Qt.Key_Control || k === Qt.Key_Shift || k === Qt.Key_Alt ||
+                                        k === Qt.Key_Meta || k === Qt.Key_AltGr || k === Qt.Key_Super_L || k === Qt.Key_Super_R) {
+                                    return
+                                }
+
+                                var name = shortcutsGroupBox.keyName(event)
+                                if (name === "") {
+                                    return
+                                }
+                                var parts = []
+                                if (event.modifiers & Qt.ControlModifier) parts.push("Ctrl")
+                                if (event.modifiers & Qt.AltModifier) parts.push("Alt")
+                                if (event.modifiers & Qt.ShiftModifier) parts.push("Shift")
+                                if (event.modifiers & Qt.MetaModifier) parts.push("Win")
+                                parts.push(name)
+
+                                StreamingPreferences.setShortcutBinding(modelData.id, parts.join("+"))
+                                capturing = false
+                                shortcutsGroupBox.version++
+                            }
+                        }
+                    }
+                }
+
+                Button {
+                    text: qsTr("Reset all shortcuts")
+                    font.pointSize: 10
+                    onClicked: {
+                        StreamingPreferences.resetShortcuts()
+                        shortcutsGroupBox.version++
+                    }
+                }
+            }
+        }
+
+        GroupBox {
             id: gamepadSettingsGroupBox
             width: (parent.width - (parent.leftPadding + parent.rightPadding))
             padding: 12

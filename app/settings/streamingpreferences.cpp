@@ -1,4 +1,5 @@
 #include "streamingpreferences.h"
+#include "shortcuts.h"
 #include "utils.h"
 
 #include <QSettings>
@@ -391,6 +392,33 @@ void StreamingPreferences::save()
             settings.setValue(SER_ABSMOUSEMODE, m_SavedAbsoluteMouseMode);
         }
     }
+}
+
+QVariantList StreamingPreferences::shortcutActions() const
+{
+    QVariantList list;
+    for (const Shortcuts::Action& action : Shortcuts::actions()) {
+        QVariantMap item;
+        item["id"] = action.id;
+        item["label"] = QCoreApplication::translate("Shortcuts", action.label);
+        list.append(item);
+    }
+    return list;
+}
+
+QString StreamingPreferences::shortcutBinding(const QString& id) const
+{
+    return Shortcuts::binding(id);
+}
+
+void StreamingPreferences::setShortcutBinding(const QString& id, const QString& binding)
+{
+    Shortcuts::setBinding(id, binding);
+}
+
+void StreamingPreferences::resetShortcuts()
+{
+    Shortcuts::resetAll();
 }
 
 void StreamingPreferences::applyCompanionOverrides()
