@@ -52,6 +52,7 @@ struct WacomRawReader
     std::atomic<uint64_t> lastReportMs { 0 };
     std::atomic<bool> seenReport { false };
     std::atomic<bool> exited { false };
+    std::atomic<uint32_t> reportCount { 0 };  // for the pen statistics log line
 
     static constexpr uint8_t k_FlagBarrel1 = 0x02;
     static constexpr uint8_t k_FlagBarrel2 = 0x04;
@@ -88,6 +89,7 @@ struct WacomRawReader
                 distance = report[16];
             }
             lastReportMs = GetTickCount64();
+            reportCount++;
             if (!seenReport) {
                 seenReport = true;
                 SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using raw Wacom reports for pen buttons and pressure");
@@ -164,6 +166,43 @@ struct WacomRawReader
         CloseHandle(handle);
     }
 };
+
+// Pen statistics, logged every 2 s while the pen is active ("Pen stats: ..."), to see how
+// evenly and how often samples leave this PC. Only touched on the UI thread.
+static struct {
+    uint64_t windowStart = 0;
+    uint64_t lastMessage = 0;
+    uint32_t maxGapMs = 0;
+    uint32_t messages = 0, sent = 0, contactSamples = 0, sharedPressure = 0;
+    uint32_t rawAtStart = 0;
+} s_Stats;
+
+static void logPenStats(WacomRawReader* raw)
+{
+    uint64_t now = GetTickCount64();
+    if (s_Stats.lastMessage != 0 && now - s_Stats.lastMessage < 500) {
+        s_Stats.maxGapMs = qMax(s_Stats.maxGapMs, (uint32_t)(now - s_Stats.lastMessage));
+    }
+    s_Stats.lastMessage = now;
+    if (s_Stats.windowStart == 0) {
+        s_Stats.windowStart = now;
+        s_Stats.rawAtStart = raw != nullptr ? raw->reportCount.load() : 0;
+        return;
+    }
+
+    uint64_t elapsed = now - s_Stats.windowStart;
+    if (elapsed < 2000) {
+        return;
+    }
+    uint32_t rawReports = raw != nullptr ? raw->reportCount.load() - s_Stats.rawAtStart : 0;
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Pen stats: %.0f messages/s, %.0f samples sent/s, raw tablet %.0f reports/s, "
+                "max gap %u ms, %u/%u contact samples used the latest raw pressure",
+                s_Stats.messages * 1000.0 / elapsed, s_Stats.sent * 1000.0 / elapsed,
+                rawReports * 1000.0 / elapsed, s_Stats.maxGapMs,
+                s_Stats.sharedPressure, s_Stats.contactSamples);
+    s_Stats = {};
+}
 
 static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                         UINT_PTR subclassId, DWORD_PTR refData)
@@ -400,7 +439,16 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
 
         LiSendPenEvent(eventType, toolType, penButtons, m_LastPenX, m_LastPenY, pressureOrDistance,
                        0.0f, 0.0f, rotation, tilt);
+        s_Stats.sent++;
+        if (flags & POINTER_FLAG_INCONTACT) {
+            s_Stats.contactSamples++;
+            if (i > 0) {
+                s_Stats.sharedPressure++;  // an older history sample paired with the latest raw pressure
+            }
+        }
     }
+    s_Stats.messages++;
+    logPenStats((WacomRawReader*)m_WacomRaw);
 
     return true;
 }
