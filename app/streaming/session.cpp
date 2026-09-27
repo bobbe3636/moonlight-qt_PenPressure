@@ -1822,11 +1822,10 @@ void Session::start()
 
     // Initialize the gamepad code with our preferences
     // NB: m_InputHandler must be initialize before starting the connection.
-    // Outside immersive mode (the default) the mouse moves freely in and out of the window, and
-    // with extra screens it has to reach the other screens' windows: use absolute (remote
-    // desktop) mouse mode for this session without changing the saved mouse setting.
+    // With extra screens the mouse has to reach the other screens' windows: absolute (remote
+    // desktop) mouse for this session, without changing the saved mouse setting.
     bool savedAbsoluteMouseMode = m_Preferences->absoluteMouseMode;
-    if (!m_Preferences->immersiveMode || m_Preferences->extraScreens > 0) {
+    if (m_Preferences->extraScreens > 0) {
         m_Preferences->absoluteMouseMode = true;
     }
     m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
@@ -1957,6 +1956,12 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
+    // Immersive mode: the mouse starts locked in the window (a single screen; with extra screens it
+    // has to reach the other windows, so each window's menu or shortcut locks it)
+    if (m_Preferences->immersiveMode && m_Preferences->extraScreens == 0 && !m_IsCompanion) {
+        m_InputHandler->setPointerRegionLock(true);
+    }
+
     // The floating menu button, on every screen's window
     m_StreamMenu = streamMenuCreate(this, m_Window);
     installPrintScreenHook();
@@ -1964,11 +1969,9 @@ void Session::exec()
     // Our connection and window are up: open a window for each of the host's extra screens
     startCompanionScreens();
 
-    // Outside immersive mode, a click on an inactive stream window both activates it and
-    // reaches the host (no "click once to wake it up"), which matters with several windows
-    if (!m_Preferences->immersiveMode || m_IsCompanion) {
-        SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-    }
+    // A click on an inactive stream window both activates it and reaches the host (no "click
+    // once to wake it up"), which matters with several windows
+    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
@@ -2580,16 +2583,21 @@ bool Session::isStatsOverlayVisible()
 
 bool Session::isImmersive()
 {
-    return m_InputHandler != nullptr && !m_InputHandler->isAbsoluteMouseMode();
+    return m_InputHandler != nullptr && m_InputHandler->isPointerRegionLockActive();
 }
 
 void Session::toggleImmersive()
 {
-    // Ctrl+Alt+Shift+M switches between captured (relative) and free (absolute) mouse
-    runShortcutCommand('M');
-    m_Preferences->immersiveMode = isImmersive();
-    m_Preferences->absoluteMouseMode = !m_Preferences->immersiveMode;
+    // Immersive mode: the mouse stays in this window. Still an absolute pointer, so the menu
+    // button stays clickable (a captured, game-style mouse is the settings' mouse option).
+    if (m_InputHandler == nullptr) {
+        return;
+    }
+    m_InputHandler->setPointerRegionLock(!m_InputHandler->isPointerRegionLockActive());
+    m_Preferences->immersiveMode = m_InputHandler->isPointerRegionLockActive();
     m_Preferences->save();
+    showStatusMessage(m_Preferences->immersiveMode ? "Immersive mode: the mouse stays in this window"
+                                                   : "Immersive mode off", true);
 }
 
 void Session::toggleKeyboardImmersive()
@@ -2641,7 +2649,11 @@ void Session::reconnectWithResolution(int width, int height)
     m_Preferences->width = width;
     m_Preferences->height = height;
     m_Preferences->save();
+    reconnectMainScreen();
+}
 
+void Session::reconnectMainScreen()
+{
     {
         QReadLocker lock(&m_Computer->lock);
         m_RelaunchArgs = QStringList { "stream", m_Computer->uuid, m_App.name };
@@ -2951,6 +2963,45 @@ void Session::setScreenResolution(int screen, int width, int height)
         }
     }
     reconnectWithResolution(width, height);
+}
+
+void Session::setScreenValue(int screen, const QString& name, int value)
+{
+    QSettings settings;
+    if (screen >= 2) {
+        // That extra screen's window only: it starts again with its own value
+        settings.setValue(QString("screens/%1/%2").arg(screen).arg(name), value);
+        restartCompanion(screen);
+        return;
+    }
+
+    // Screen 1: the extra screens keep the value they have (their own, or the one they started
+    // with), and only this window reconnects
+    int shared = name == "fps" ? m_Preferences->fps : name == "vsync" ? (int)m_Preferences->enableVsync
+                 : (m_Preferences->extraScreensHalfBitrate ? qMax(10000, m_Preferences->bitrateKbps / 2) : m_Preferences->bitrateKbps);
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        QString key = QString("screens/%1/%2").arg(companion.screen).arg(name);
+        if (!settings.contains(key)) {
+            if (name == "vsync") {
+                settings.setValue(key, shared != 0);
+            }
+            else {
+                settings.setValue(key, shared);
+            }
+        }
+    }
+    if (name == "fps") {
+        m_Preferences->fps = value;
+    }
+    else if (name == "bitrate") {
+        m_Preferences->bitrateKbps = value;
+        m_Preferences->autoAdjustBitrate = false;
+    }
+    else if (name == "vsync") {
+        m_Preferences->enableVsync = value != 0;
+    }
+    m_Preferences->save();
+    reconnectMainScreen();
 }
 
 // ---- where each screen's window goes ----

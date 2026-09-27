@@ -2,6 +2,7 @@
 #include "shortcuts.h"
 #include "utils.h"
 
+#include <QMap>
 #include <QSettings>
 #include <QTranslator>
 #include <QCoreApplication>
@@ -143,7 +144,14 @@ void StreamingPreferences::reload()
     multiController = settings.value(SER_MULTICONT, true).toBool();
     enableMdns = settings.value(SER_MDNS, true).toBool();
     quitAppAfter = settings.value(SER_QUITAPPAFTER, false).toBool();
-    absoluteMouseMode = settings.value(SER_ABSMOUSEMODE, false).toBool();
+    absoluteMouseMode = settings.value(SER_ABSMOUSEMODE, true).toBool();
+    if (!settings.value("migration/immersivelock", false).toBool()) {
+        // Immersive mode used to switch the mouse to game mode (and save that); now it only locks
+        // the mouse in the window, so back to the remote desktop mouse once
+        absoluteMouseMode = true;
+        settings.setValue(SER_ABSMOUSEMODE, true);
+        settings.setValue("migration/immersivelock", true);
+    }
     absoluteTouchMode = settings.value(SER_ABSTOUCHMODE, true).toBool();
     framePacing = settings.value(SER_FRAMEPACING, false).toBool();
     connectionWarnings = settings.value(SER_CONNWARNINGS, true).toBool();
@@ -341,6 +349,22 @@ void StreamingPreferences::save()
 {
     QSettings settings;
 
+    // The settings page edits one screen at a time: keep that one's values, save screen 1's here
+    if (m_EditedScreen != 1) {
+        setEditedScreen(1);
+    }
+
+    // An extra screen's window: what it overrides is never saved as the user's settings, and what
+    // the main window (or the settings) saved meanwhile stays as it is
+    static const char* const companionKeys[] = { SER_WINDOWMODE, SER_EXTRASCREENS, SER_BITRATE, SER_WIDTH,
+                                                 SER_HEIGHT, SER_FPS, SER_VSYNC, SER_ABSMOUSEMODE };
+    QMap<QString, QVariant> companionKept;
+    if (m_Companion) {
+        for (const char* key : companionKeys) {
+            companionKept[key] = settings.value(key);
+        }
+    }
+
     settings.setValue(SER_WIDTH, width);
     settings.setValue(SER_HEIGHT, height);
     settings.setValue(SER_FPS, fps);
@@ -405,17 +429,102 @@ void StreamingPreferences::save()
     }
 
     if (m_Companion) {
-        // Keep the user's own values for what this extra screen's window overrides. The
-        // absolute mouse only counts as the user's choice when immersive mode changed it.
-        settings.setValue(SER_WINDOWMODE, static_cast<int>(m_SavedWindowMode));
-        settings.setValue(SER_EXTRASCREENS, m_SavedExtraScreens);
-        settings.setValue(SER_BITRATE, m_SavedBitrateKbps);
-        settings.setValue(SER_WIDTH, m_SavedWidth);
-        settings.setValue(SER_HEIGHT, m_SavedHeight);
-        if (absoluteMouseMode) {
-            settings.setValue(SER_ABSMOUSEMODE, m_SavedAbsoluteMouseMode);
+        for (auto it = companionKept.cbegin(); it != companionKept.cend(); ++it) {
+            if (it.value().isValid()) {
+                settings.setValue(it.key(), it.value());
+            }
+            else {
+                settings.remove(it.key());
+            }
         }
     }
+}
+
+static QString screenKey(int screen, const char* name)
+{
+    return QString("screens/%1/%2").arg(screen).arg(name);
+}
+
+void StreamingPreferences::setEditedScreen(int screen)
+{
+    screen = qBound(1, screen, 3);
+    if (screen == m_EditedScreen) {
+        return;
+    }
+
+    // Keep the screen being left (another screen's values only when changed here, so the ones it
+    // doesn't have of its own keep following screen 1)
+    QSettings settings;
+    if (m_EditedScreen == 1) {
+        m_Screen1 = { width, height, fps, bitrateKbps, enableVsync };
+    }
+    else {
+        const ScreenValues& shown = m_ShownValues;
+        if (width != shown.width || height != shown.height) {
+            settings.setValue(screenKey(m_EditedScreen, "width"), width);
+            settings.setValue(screenKey(m_EditedScreen, "height"), height);
+        }
+        if (fps != shown.fps) {
+            settings.setValue(screenKey(m_EditedScreen, "fps"), fps);
+        }
+        if (bitrateKbps != shown.bitrateKbps) {
+            settings.setValue(screenKey(m_EditedScreen, "bitrate"), bitrateKbps);
+        }
+        if (enableVsync != shown.vsync) {
+            settings.setValue(screenKey(m_EditedScreen, "vsync"), enableVsync);
+        }
+    }
+
+    // Show the other one: its own values, else screen 1's
+    if (screen == 1) {
+        width = m_Screen1.width;
+        height = m_Screen1.height;
+        fps = m_Screen1.fps;
+        bitrateKbps = m_Screen1.bitrateKbps;
+        enableVsync = m_Screen1.vsync;
+    }
+    else {
+        width = settings.value(screenKey(screen, "width"), m_Screen1.width).toInt();
+        height = settings.value(screenKey(screen, "height"), m_Screen1.height).toInt();
+        fps = settings.value(screenKey(screen, "fps"), m_Screen1.fps).toInt();
+        bitrateKbps = settings.value(screenKey(screen, "bitrate"), m_Screen1.bitrateKbps).toInt();
+        enableVsync = settings.value(screenKey(screen, "vsync"), m_Screen1.vsync).toBool();
+        m_ShownValues = { width, height, fps, bitrateKbps, enableVsync };
+    }
+    m_EditedScreen = screen;
+
+    emit displayModeChanged();
+    emit bitrateChanged();
+    emit enableVsyncChanged();
+    emit editedScreenChanged();
+}
+
+void StreamingPreferences::resetAllToDefaults()
+{
+    QSettings settings;
+    static const char* const keys[] = {
+        SER_STREAMSETTINGS, SER_WIDTH, SER_HEIGHT, SER_FPS, SER_BITRATE, SER_UNLOCK_BITRATE, SER_AUTOADJUSTBITRATE,
+        SER_FULLSCREEN, SER_VSYNC, SER_GAMEOPTS, SER_HOSTAUDIO, SER_MULTICONT, SER_AUDIOCFG, SER_VIDEOCFG, SER_HDR,
+        SER_YUV444, SER_VIDEODEC, SER_WINDOWMODE, SER_MDNS, SER_QUITAPPAFTER, SER_ABSMOUSEMODE, SER_ABSTOUCHMODE,
+        SER_STARTWINDOWED, SER_FRAMEPACING, SER_CONNWARNINGS, SER_CONFWARNINGS, SER_UIDISPLAYMODE, SER_RICHPRESENCE,
+        SER_GAMEPADMOUSE, SER_PACKETSIZE, SER_DETECTNETBLOCKING, SER_SHOWPERFOVERLAY, SER_SWAPMOUSEBUTTONS,
+        SER_MUTEONFOCUSLOSS, SER_BACKGROUNDGAMEPAD, SER_REVERSESCROLL, SER_SWAPFACEBUTTONS, SER_CAPTURESYSKEYS,
+        SER_KEEPAWAKE, SER_EXTRASCREENS, SER_EXTRASCREENSHALFBITRATE, SER_IMMERSIVEMODE, SER_PENINPUTMODE,
+        SER_STREAMMENUBUTTON, SER_PRINTSCREENTOHOST, SER_REMEMBERWINDOWS, SER_LANGUAGE, SER_RENDERER,
+    };
+    for (const char* key : keys) {
+        settings.remove(key);
+    }
+    for (const char* group : { "screens", "windows", "shortcuts", "streammenu", "companions" }) {
+        settings.remove(group);
+    }
+    m_EditedScreen = 1;
+    reload();
+
+    emit displayModeChanged();
+    emit bitrateChanged();
+    emit enableVsyncChanged();
+    emit editedScreenChanged();
 }
 
 QVariantList StreamingPreferences::shortcutActions() const
@@ -455,13 +564,22 @@ void StreamingPreferences::applyCompanionOverrides(int screen)
     m_SavedWidth = width;
     m_SavedHeight = height;
 
-    // This screen's own resolution, when one was picked in its stream menu
+    // This screen's own resolution, frame rate, bitrate and V-Sync, when set (its stream menu, or
+    // the settings for that screen)
     QSettings settings;
     int screenWidth = settings.value(QString("screens/%1/width").arg(screen), 0).toInt();
     int screenHeight = settings.value(QString("screens/%1/height").arg(screen), 0).toInt();
     if (screenWidth > 0 && screenHeight > 0) {
         width = screenWidth;
         height = screenHeight;
+    }
+    int screenFps = settings.value(QString("screens/%1/fps").arg(screen), 0).toInt();
+    if (screenFps > 0) {
+        fps = screenFps;
+    }
+    int screenBitrate = settings.value(QString("screens/%1/bitrate").arg(screen), 0).toInt();
+    if (settings.contains(QString("screens/%1/vsync").arg(screen))) {
+        enableVsync = settings.value(QString("screens/%1/vsync").arg(screen)).toBool();
     }
 
     // Its own window, absolute mouse so the cursor moves freely between the screens' windows,
@@ -472,7 +590,10 @@ void StreamingPreferences::applyCompanionOverrides(int screen)
 
     // Optional: extra screens mostly show static content, so half the main stream's bitrate
     // (at least 10 Mbps) keeps the total bandwidth of 2-3 screens reasonable, e.g. over a VPN
-    if (extraScreensHalfBitrate) {
+    if (screenBitrate > 0) {
+        bitrateKbps = screenBitrate;
+    }
+    else if (extraScreensHalfBitrate) {
         bitrateKbps = qMax(10000, bitrateKbps / 2);
     }
 }

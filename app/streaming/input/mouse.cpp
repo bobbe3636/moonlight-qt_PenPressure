@@ -260,6 +260,13 @@ bool SdlInputHandler::isMouseInVideoRegion(int mouseX, int mouseY, int windowWid
            (mouseY >= dst.y && mouseY <= dst.y + dst.h);
 }
 
+void SdlInputHandler::setPointerRegionLock(bool locked)
+{
+    m_PointerRegionLockActive = locked;
+    m_PointerRegionLockToggledByUser = true;
+    updatePointerRegionLock();
+}
+
 void SdlInputHandler::updatePointerRegionLock()
 {
     // Pointer region lock is irrelevant in relative mouse mode

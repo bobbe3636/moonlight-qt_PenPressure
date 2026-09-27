@@ -112,6 +112,45 @@ Flickable {
 
                 Label {
                     width: parent.width
+                    id: editedScreenTitle
+                    text: qsTr("Settings for")
+                    font.pointSize: 12
+                    wrapMode: Text.Wrap
+                    visible: StreamingPreferences.extraScreens > 0
+                }
+
+                AutoResizingComboBox {
+                    id: editedScreenComboBox
+                    visible: StreamingPreferences.extraScreens > 0
+                    textRole: "text"
+                    model: ListModel {
+                        ListElement { text: qsTr("Screen 1 (main window)") }
+                        ListElement { text: qsTr("Screen 2") }
+                        ListElement { text: qsTr("Screen 3") }
+                    }
+
+                    Component.onCompleted: {
+                        currentIndex = StreamingPreferences.editedScreen - 1
+                        recalculateWidth()
+                    }
+
+                    // ::onActivated must be used, as it only listens for when the index is changed by a human
+                    onActivated : {
+                        StreamingPreferences.editedScreen = currentIndex + 1
+                        resolutionComboBox.selectSavedResolution()
+                        fpsComboBox.selectSavedFps()
+                        slider.value = StreamingPreferences.bitrateKbps
+                        vsyncCheck.checked = StreamingPreferences.enableVsync
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 8000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Resolution, frame rate, bitrate and V-Sync are set per screen: here, or from each screen's stream menu (the same values). A screen without its own values uses screen 1's.")
+                }
+
+                Label {
+                    width: parent.width
                     id: resFPStitle
                     text: qsTr("Resolution and FPS")
                     font.pointSize: 12
@@ -162,38 +201,11 @@ Flickable {
                             }
                         }
 
-                        // ignore setting the index at first, and actually set it when the component is loaded
-                        Component.onCompleted: {
-                            // Refresh display data before using it to build the list
-                            SystemProperties.refreshDisplays()
-
-                            // Add native and safe area resolutions for all attached displays
-                            var done = false
-                            for (var displayIndex = 0; !done; displayIndex++) {
-                                var screenRect = SystemProperties.getNativeResolution(displayIndex);
-                                var safeAreaRect = SystemProperties.getSafeAreaResolution(displayIndex);
-
-                                if (screenRect.width === 0) {
-                                    // Exceeded max count of displays
-                                    done = true
-                                    break
-                                }
-
-                                addDetectedResolution(qsTr("Native"), screenRect)
-                                addDetectedResolution(qsTr("Native (Excluding Notch)"), safeAreaRect)
-                            }
-
-                            // Prune resolutions that are over the decoder's maximum
-                            var max_pixels = SystemProperties.maximumResolution.width * SystemProperties.maximumResolution.height;
-                            if (max_pixels > 0) {
-                                for (var j = 0; j < resolutionComboBox.count; j++) {
-                                    var existing_width = parseInt(resolutionListModel.get(j).video_width);
-                                    var existing_height = parseInt(resolutionListModel.get(j).video_height);
-
-                                    if (existing_width * existing_height > max_pixels) {
-                                        resolutionListModel.remove(j)
-                                        j--
-                                    }
+                        function selectSavedResolution() {
+                            // Custom entries go first (another screen may have another resolution)
+                            for (var c = resolutionListModel.count - 1; c >= 0; c--) {
+                                if (resolutionListModel.get(c).is_custom) {
+                                    resolutionListModel.remove(c)
                                 }
                             }
 
@@ -239,6 +251,44 @@ Flickable {
                             lastIndexValue = currentIndex
                         }
 
+                        // ignore setting the index at first, and actually set it when the component is loaded
+                        Component.onCompleted: {
+                            // Refresh display data before using it to build the list
+                            SystemProperties.refreshDisplays()
+
+                            // Add native and safe area resolutions for all attached displays
+                            var done = false
+                            for (var displayIndex = 0; !done; displayIndex++) {
+                                var screenRect = SystemProperties.getNativeResolution(displayIndex);
+                                var safeAreaRect = SystemProperties.getSafeAreaResolution(displayIndex);
+
+                                if (screenRect.width === 0) {
+                                    // Exceeded max count of displays
+                                    done = true
+                                    break
+                                }
+
+                                addDetectedResolution(qsTr("Native"), screenRect)
+                                addDetectedResolution(qsTr("Native (Excluding Notch)"), safeAreaRect)
+                            }
+
+                            // Prune resolutions that are over the decoder's maximum
+                            var max_pixels = SystemProperties.maximumResolution.width * SystemProperties.maximumResolution.height;
+                            if (max_pixels > 0) {
+                                for (var j = 0; j < resolutionComboBox.count; j++) {
+                                    var existing_width = parseInt(resolutionListModel.get(j).video_width);
+                                    var existing_height = parseInt(resolutionListModel.get(j).video_height);
+
+                                    if (existing_width * existing_height > max_pixels) {
+                                        resolutionListModel.remove(j)
+                                        j--
+                                    }
+                                }
+                            }
+
+                            selectSavedResolution()
+                        }
+
                         id: resolutionComboBox
                         maximumWidth: parent.width / 2
                         textRole: "text"
@@ -259,14 +309,56 @@ Flickable {
                                 is_custom: false
                             }
                             ListElement {
+                                text: qsTr("1200p (16:10)")
+                                video_width: "1920"
+                                video_height: "1200"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("2560x1080 (21:9)")
+                                video_width: "2560"
+                                video_height: "1080"
+                                is_custom: false
+                            }
+                            ListElement {
                                 text: qsTr("1440p")
                                 video_width: "2560"
                                 video_height: "1440"
                                 is_custom: false
                             }
                             ListElement {
+                                text: qsTr("1600p (16:10)")
+                                video_width: "2560"
+                                video_height: "1600"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("3440x1440 (21:9)")
+                                video_width: "3440"
+                                video_height: "1440"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("3840x1600 (21:9)")
+                                video_width: "3840"
+                                video_height: "1600"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("5120x1440 (32:9)")
+                                video_width: "5120"
+                                video_height: "1440"
+                                is_custom: false
+                            }
+                            ListElement {
                                 text: qsTr("4K")
                                 video_width: "3840"
+                                video_height: "2160"
+                                is_custom: false
+                            }
+                            ListElement {
+                                text: qsTr("5120x2160 (21:9)")
+                                video_width: "5120"
                                 video_height: "2160"
                                 is_custom: false
                             }
@@ -590,18 +682,12 @@ Flickable {
                             return indexToAdd
                         }
 
-                        function reinitialize() {
-                            // Add native refresh rate for all attached displays
-                            var done = false
-                            for (var displayIndex = 0; !done; displayIndex++) {
-                                var refreshRate = SystemProperties.getRefreshRate(displayIndex);
-                                if (refreshRate === 0) {
-                                    // Exceeded max count of displays
-                                    done = true
-                                    break
+                        function selectSavedFps() {
+                            // Custom entries go first (another screen may have another frame rate)
+                            for (var c = fpsListModel.count - 1; c >= 0; c--) {
+                                if (fpsListModel.get(c).is_custom) {
+                                    fpsListModel.remove(c)
                                 }
-
-                                addRefreshRateOrdered(fpsListModel, refreshRate, qsTr("%1 FPS").arg(refreshRate), false)
                             }
 
                             var saved_fps = StreamingPreferences.fps
@@ -628,6 +714,23 @@ Flickable {
                             recalculateWidth()
 
                             lastIndexValue = currentIndex
+                        }
+
+                        function reinitialize() {
+                            // Add native refresh rate for all attached displays
+                            var done = false
+                            for (var displayIndex = 0; !done; displayIndex++) {
+                                var refreshRate = SystemProperties.getRefreshRate(displayIndex);
+                                if (refreshRate === 0) {
+                                    // Exceeded max count of displays
+                                    done = true
+                                    break
+                                }
+
+                                addRefreshRateOrdered(fpsListModel, refreshRate, qsTr("%1 FPS").arg(refreshRate), false)
+                            }
+
+                            selectSavedFps()
                         }
 
                         // ignore setting the index at first, and actually set it when the component is loaded
@@ -870,6 +973,23 @@ Flickable {
                                       qsTr("The stream will be HDR-capable, but some games may require an HDR monitor on your host PC to enable HDR mode.")
                                     :
                                       qsTr("HDR streaming is not supported on this PC.")
+                }
+
+                Button {
+                    id: resetAllButton
+                    text: qsTr("Reset all settings to defaults")
+                    font.pointSize: 10
+                    onClicked: resetAllDialog.open()
+                }
+
+                NavigableMessageDialog {
+                    id: resetAllDialog
+                    text: qsTr("Reset every setting to its default? Your paired PCs are kept.")
+                    standardButtons: Dialog.Yes | Dialog.No
+                    onAccepted: {
+                        StreamingPreferences.resetAllToDefaults()
+                        stackView.pop()
+                    }
                 }
             }
         }
@@ -1416,13 +1536,11 @@ Flickable {
                     id: immersiveModeCheck
                     hoverEnabled: true
                     width: parent.width
-                    text: qsTr("Immersive mode (capture mouse and keyboard in the stream)")
+                    text: qsTr("Immersive mode (the mouse stays in the stream window)")
                     font.pointSize:  12
                     checked: StreamingPreferences.immersiveMode
                     onCheckedChanged: {
                         StreamingPreferences.immersiveMode = checked
-                        // Immersive = the classic game-style captured mouse
-                        StreamingPreferences.absoluteMouseMode = !checked
                     }
 
                     ToolTip.delay: 1000

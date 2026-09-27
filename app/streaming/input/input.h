@@ -170,6 +170,8 @@ public:
     bool isLocalCursorVisible() const { return m_MouseCursorCapturedVisibilityState == SDL_ENABLE; }
 
     bool isPointerRegionLockActive() const { return m_PointerRegionLockActive; }
+    // Immersive mode: the mouse locked in this window (an absolute pointer still)
+    void setPointerRegionLock(bool locked);
 
     // Keyboard immersive mode: system shortcuts (Alt+Tab, Win...) go to the host whenever the
     // stream window has focus, windowed or fullscreen

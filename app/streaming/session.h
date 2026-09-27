@@ -157,6 +157,9 @@ public:
     void toggleKeyboardImmersive();
     int streamWidth() const { return m_StreamConfig.width; }
     int streamHeight() const { return m_StreamConfig.height; }
+    int streamFps() const { return m_StreamConfig.fps; }
+    int streamBitrateKbps() const { return m_StreamConfig.bitrate; }
+    bool isVsyncEnabled() const { return m_Preferences->enableVsync; }
     void reconnectWithResolution(int width, int height);
     void sendCtrlAltDel();
 
@@ -164,8 +167,10 @@ public:
     int screenNumber() const { return m_IsCompanion ? m_CompanionScreen : 1; }
     void setCompanionScreen(int screen) { m_CompanionScreen = screen; }
 
-    // A new resolution for one screen (main window): only that screen's window reconnects
+    // A new resolution / frame rate ("fps") / bitrate ("bitrate", Kbps) / V-Sync ("vsync") for
+    // one screen (main window): only that screen's window reconnects
     void setScreenResolution(int screen, int width, int height);
+    void setScreenValue(int screen, const QString& name, int value);
 
     // Every stream window back to a default place, out of fullscreen (main window); this one.
     // Remembering the windows' places is an option (shared by every screen's window).
@@ -207,6 +212,7 @@ private:
     bool m_HandOverCompanions = false;      // a main-only reconnect: the new main window takes the extra screens' windows over
     bool m_QuitAppBeforeRelaunch = false;   // ...and the host builds this screen's display anew
     void handOverCompanions();
+    void reconnectMainScreen();
     void takeOverCompanions(int count);
     void restartCompanion(int screen);
     void saveWindowPlacement();
