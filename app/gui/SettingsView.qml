@@ -1468,6 +1468,23 @@ Flickable {
                 }
 
                 CheckBox {
+                    id: rememberWindowsCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    text: qsTr("Remember window positions")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.rememberWindows
+                    onCheckedChanged: {
+                        StreamingPreferences.rememberWindows = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Each screen's stream window opens where it was when it closed: same monitor, place, size, fullscreen or not. Off: they open in their default place. Also in the stream menu (Screens).")
+                }
+
+                CheckBox {
                     id: absoluteMouseCheck
                     hoverEnabled: true
                     width: parent.width

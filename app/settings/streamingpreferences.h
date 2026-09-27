@@ -171,6 +171,7 @@ public:
     Q_PROPERTY(int penInputMode MEMBER penInputMode NOTIFY penInputModeChanged)
     Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
     Q_PROPERTY(bool printScreenToHost MEMBER printScreenToHost NOTIFY printScreenToHostChanged)
+    Q_PROPERTY(bool rememberWindows MEMBER rememberWindows NOTIFY rememberWindowsChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
@@ -210,6 +211,7 @@ public:
     int penInputMode; // 0 automatic, 1 Windows Ink (+ raw Wacom reports), 2 Wintab
     bool showStreamMenuButton;
     bool printScreenToHost; // Print Screen in a stream window goes to the host, not this PC's screenshot
+    bool rememberWindows; // each screen's window opens where it was when it closed
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
@@ -264,6 +266,7 @@ signals:
     void penInputModeChanged();
     void showStreamMenuButtonChanged();
     void printScreenToHostChanged();
+    void rememberWindowsChanged();
     void languageChanged();
     void rendererSelectionChanged();
 
@@ -276,6 +279,7 @@ private:
 
     bool m_LoadedExtraScreensHalfBitrate = false;
     bool m_LoadedPrintScreenToHost = true;
+    bool m_LoadedRememberWindows = true;
     bool m_Companion = false;
     WindowMode m_SavedWindowMode = WM_WINDOWED;
     bool m_SavedAbsoluteMouseMode = false;
