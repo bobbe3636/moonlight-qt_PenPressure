@@ -167,7 +167,10 @@ public:
     // A new resolution for one screen (main window): only that screen's window reconnects
     void setScreenResolution(int screen, int width, int height);
 
-    // Every stream window back to a default place, out of fullscreen (main window); this one
+    // Every stream window back to a default place, out of fullscreen (main window); this one.
+    // Remembering the windows' places is an option (shared by every screen's window).
+    static bool isRememberingWindows();
+    void toggleRememberWindows();
     void resetWindowPlacements();
     void resetOwnWindowPlacement();
 

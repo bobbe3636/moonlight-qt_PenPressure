@@ -57,6 +57,7 @@
 #define SER_PENINPUTMODE "peninputmode"
 #define SER_STREAMMENUBUTTON "streammenubutton"
 #define SER_PRINTSCREENTOHOST "printscreentohost"
+#define SER_REMEMBERWINDOWS "rememberwindows"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -166,6 +167,8 @@ void StreamingPreferences::reload()
     showStreamMenuButton = settings.value(SER_STREAMMENUBUTTON, true).toBool();
     printScreenToHost = settings.value(SER_PRINTSCREENTOHOST, true).toBool();
     m_LoadedPrintScreenToHost = printScreenToHost;
+    rememberWindows = settings.value(SER_REMEMBERWINDOWS, true).toBool();
+    m_LoadedRememberWindows = rememberWindows;
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
@@ -391,6 +394,14 @@ void StreamingPreferences::save()
         // Same as above: any screen's menu can flip it
         settings.setValue(SER_PRINTSCREENTOHOST, printScreenToHost);
         m_LoadedPrintScreenToHost = printScreenToHost;
+    }
+    if (rememberWindows != m_LoadedRememberWindows) {
+        // Same: any screen's menu can flip it. Off: the windows open in their default place.
+        settings.setValue(SER_REMEMBERWINDOWS, rememberWindows);
+        m_LoadedRememberWindows = rememberWindows;
+        if (!rememberWindows) {
+            settings.remove("windows");
+        }
     }
 
     if (m_Companion) {

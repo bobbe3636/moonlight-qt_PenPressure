@@ -2960,9 +2960,23 @@ static QString placementKey(int screen, const char* name)
     return QString("windows/screen%1/%2").arg(screen).arg(name);
 }
 
+bool Session::isRememberingWindows()
+{
+    return QSettings().value("rememberwindows", true).toBool();
+}
+
+void Session::toggleRememberWindows()
+{
+    // Any screen's window can flip it, so start from the stored value
+    StreamingPreferences::get()->rememberWindows = !isRememberingWindows();
+    StreamingPreferences::get()->save();
+    showStatusMessage(StreamingPreferences::get()->rememberWindows ? "Window positions are remembered when the windows close"
+                                                                   : "Windows open in their default place", true);
+}
+
 void Session::saveWindowPlacement()
 {
-    if (m_Window == nullptr) {
+    if (m_Window == nullptr || !isRememberingWindows()) {
         return;
     }
     Uint32 flags = SDL_GetWindowFlags(m_Window);
@@ -2991,7 +3005,7 @@ void Session::restoreWindowPlacement(int& x, int& y, int& width, int& height, Ui
 {
     QSettings settings;
     int screen = screenNumber();
-    if (!settings.contains(placementKey(screen, "display"))) {
+    if (!isRememberingWindows() || !settings.contains(placementKey(screen, "display"))) {
         return;
     }
 

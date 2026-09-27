@@ -47,6 +47,7 @@ enum Command {
     CmdHideButton,
     CmdHalfBitrate,
     CmdPrintScreen,
+    CmdRememberWindows,
     CmdResetWindows,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
@@ -647,6 +648,7 @@ private:
         add(screens, CmdHalfBitrate, nullptr, "Extra screens at half bitrate (next launch)", QString(),
             shared.value("extrascreenshalfbitrate", false).toBool());
         separator(screens);
+        add(screens, CmdRememberWindows, nullptr, "Remember window positions", QString(), Session::isRememberingWindows());
         add(screens, CmdResetWindows, nullptr, "Reset window positions");
         submenu(menu, screens, Glyph::Screens, "Screens");
 
@@ -799,6 +801,7 @@ private:
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
         case CmdHideButton:     toggle(); break;
         case CmdPrintScreen:    m_Session->togglePrintScreenToHost(); break;
+        case CmdRememberWindows: m_Session->toggleRememberWindows(); break;
         case CmdHalfBitrate:
             // Any screen's window can flip it, so start from the stored value
             StreamingPreferences::get()->extraScreensHalfBitrate =
