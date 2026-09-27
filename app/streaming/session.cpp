@@ -2572,6 +2572,9 @@ int Session::extraScreenCount() const
     return m_CompanionProcesses.size();
 }
 
+static void askCompanionToClose(QProcess* process);
+static void finishCompanion(QProcess* process);
+
 void Session::setExtraScreenCount(int count)
 {
     count = qBound(0, count, 2);
@@ -2581,9 +2584,8 @@ void Session::setExtraScreenCount(int count)
     // Close screens above the new count, open the missing ones (screens 2, 3 in order)
     while (m_CompanionProcesses.size() > count) {
         QProcess* process = m_CompanionProcesses.takeLast();
-        process->kill();
-        process->waitForFinished(3000);
-        delete process;
+        askCompanionToClose(process);
+        finishCompanion(process);
     }
     while (m_CompanionProcesses.size() < count) {
         startCompanionScreen(m_CompanionProcesses.size() + 2);
@@ -2621,12 +2623,42 @@ void Session::sendCtrlAltDel()
     LiSendKeyboardEvent2(0x8000 | 0xA2, KEY_ACTION_UP, 0, 0);
 }
 
+// Ask a companion's windows to close: its stream then ends with a proper disconnect, so the
+// host ends that screen at once (a killed window only times out on the host, and a quick
+// reconnect could find the old session still there)
+static void askCompanionToClose(QProcess* process)
+{
+#ifdef Q_OS_WIN32
+    EnumWindows([](HWND hwnd, LPARAM pid) -> BOOL {
+        DWORD windowPid = 0;
+        GetWindowThreadProcessId(hwnd, &windowPid);
+        if (windowPid == (DWORD)pid && IsWindowVisible(hwnd)) {
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        return TRUE;
+    }, (LPARAM)process->processId());
+#else
+    process->terminate();
+#endif
+}
+
+// Close a companion that was asked to (kill it if it doesn't go within a few seconds)
+static void finishCompanion(QProcess* process)
+{
+    if (!process->waitForFinished(4000)) {
+        process->kill();
+        process->waitForFinished(3000);
+    }
+    delete process;
+}
+
 void Session::stopCompanionScreens()
 {
     for (QProcess* process : std::as_const(m_CompanionProcesses)) {
-        process->kill();
-        process->waitForFinished(3000);
-        delete process;
+        askCompanionToClose(process);
+    }
+    for (QProcess* process : std::as_const(m_CompanionProcesses)) {
+        finishCompanion(process);
     }
     m_CompanionProcesses.clear();
 }
