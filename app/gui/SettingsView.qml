@@ -945,14 +945,15 @@ Flickable {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         currentIndex = Math.max(0, Math.min(2, StreamingPreferences.extraScreens))
+                        recalculateWidth()
                     }
 
                     id: extraScreensComboBox
                     textRole: "text"
                     model: ListModel {
                         ListElement { text: qsTr("1 screen") }
-                        ListElement { text: qsTr("2 screens (host needs Apollo extra screens)") }
-                        ListElement { text: qsTr("3 screens (host needs Apollo extra screens)") }
+                        ListElement { text: qsTr("2 screens") }
+                        ListElement { text: qsTr("3 screens") }
                     }
                     // ::onActivated must be used, as it only listens for when the index is changed by a human
                     onActivated : {
@@ -1389,6 +1390,7 @@ Flickable {
                     // ignore setting the index at first, and actually set it when the component is loaded
                     Component.onCompleted: {
                         currentIndex = Math.max(0, Math.min(2, StreamingPreferences.penInputMode))
+                        recalculateWidth()
                     }
 
                     id: penInputModeComboBox
@@ -1396,8 +1398,8 @@ Flickable {
                     textRole: "text"
                     model: ListModel {
                         ListElement { text: qsTr("Automatic") }
-                        ListElement { text: qsTr("Windows Ink (raw Wacom data for the Cintiq 22)") }
-                        ListElement { text: qsTr("Wintab (full pressure range, any tablet)") }
+                        ListElement { text: qsTr("Windows Ink") }
+                        ListElement { text: qsTr("Wintab (experimental)") }
                     }
                     // ::onActivated must be used, as it only listens for when the index is changed by a human
                     onActivated : {
@@ -1407,7 +1409,7 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 8000
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("How Moonlight reads your pen. Windows Ink works with every pen but gives 1024 pressure levels (8192 on a Cintiq 22 through its raw data). Wintab gives the tablet's full pressure range, tilt and buttons through the tablet driver. Applies from the next stream.")
+                    ToolTip.text: qsTr("How Moonlight reads your pen. Automatic and Windows Ink: Windows Ink, which works with every pen, plus the tablet's raw data where Moonlight knows it (a Cintiq 22's full 8192 pressure levels). Wintab (experimental): the tablet driver's Wintab for its full pressure range; it may not recognize the pen yet. Applies from the next stream.")
                 }
 
                 CheckBox {
@@ -1445,6 +1447,24 @@ Flickable {
                     ToolTip.timeout: 10000
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("A small Moonlight button on the stream window with every in-stream command. Drag it to any edge. Show or hide it while streaming with Ctrl+Alt+Shift+B.")
+                }
+
+                CheckBox {
+                    id: printScreenToHostCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    visible: Qt.platform.os === "windows"
+                    text: qsTr("Print Screen goes to the host")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.printScreenToHost
+                    onCheckedChanged: {
+                        StreamingPreferences.printScreenToHost = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Print Screen (and Alt+Print Screen) pressed in a stream window takes the screenshot on the host, and this PC's screenshot tool doesn't open. Also in the stream menu.")
                 }
 
                 CheckBox {

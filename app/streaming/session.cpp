@@ -10,6 +10,7 @@
 #include "utils.h"
 #include "path.h"
 #include <QDir>
+#include <QSettings>
 
 #ifdef HAVE_FFMPEG
 #include "video/ffmpeg.h"
@@ -17,6 +18,10 @@
 
 #ifdef HAVE_SLVIDEO
 #include "video/slvid.h"
+#endif
+
+#ifdef Q_OS_WIN32
+#include <windows.h>
 #endif
 
 #ifdef Q_OS_WIN32
@@ -1937,6 +1942,7 @@ void Session::exec()
 
     // The floating menu button, on every screen's window
     m_StreamMenu = streamMenuCreate(this, m_Window);
+    installPrintScreenHook();
 
     // Our connection and window are up: open a window for each of the host's extra screens
     startCompanionScreens();
@@ -2440,6 +2446,7 @@ DispatchDeferredCleanup:
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window
+    removePrintScreenHook();
     streamMenuDestroy(m_StreamMenu);
     m_StreamMenu = nullptr;
 
@@ -2611,6 +2618,92 @@ void Session::reconnectWithResolution(int width, int height)
     event.type = SDL_QUIT;
     event.quit.timestamp = SDL_GetTicks();
     SDL_PushEvent(&event);
+}
+
+// ---- Print Screen to the host ----
+// Windows acts on Print Screen before any window sees it (this PC's screenshot tool, or a copy
+// to the clipboard); the window only gets the key-up afterwards, which then also reached the
+// host. A low-level keyboard hook sees it first: in a stream window, with the option on, it
+// goes to the host only.
+
+#ifdef Q_OS_WIN32
+static Session* s_PrintScreenSession = nullptr;
+
+static LRESULT CALLBACK printScreenHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && s_PrintScreenSession != nullptr) {
+        auto key = (const KBDLLHOOKSTRUCT*)lParam;
+        if (key->vkCode == VK_SNAPSHOT && !(key->flags & LLKHF_INJECTED) && s_PrintScreenSession->printScreenGoesToHost()) {
+            bool down = wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN;
+            char modifiers = 0;
+            if (GetAsyncKeyState(VK_SHIFT) & 0x8000) {
+                modifiers |= MODIFIER_SHIFT;
+            }
+            if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {
+                modifiers |= MODIFIER_CTRL;
+            }
+            if (GetAsyncKeyState(VK_MENU) & 0x8000) {
+                modifiers |= MODIFIER_ALT;
+            }
+            if ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000) {
+                modifiers |= MODIFIER_META;
+            }
+            LiSendKeyboardEvent2(0x8000 | VK_SNAPSHOT, down ? KEY_ACTION_DOWN : KEY_ACTION_UP, modifiers, 0);
+            return 1;  // neither this PC nor the window sees it
+        }
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+#endif
+
+void Session::installPrintScreenHook()
+{
+#ifdef Q_OS_WIN32
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (m_Window != nullptr && SDL_GetWindowWMInfo(m_Window, &info) && info.subsystem == SDL_SYSWM_WINDOWS) {
+        m_WindowHandle = (quintptr)info.info.win.window;
+    }
+    s_PrintScreenSession = this;
+    m_PrintScreenHook = SetWindowsHookExW(WH_KEYBOARD_LL, printScreenHookProc, GetModuleHandleW(nullptr), 0);
+    if (m_PrintScreenHook == nullptr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Print Screen can't go to the host (keyboard hook: %lu)", GetLastError());
+    }
+#endif
+}
+
+void Session::removePrintScreenHook()
+{
+#ifdef Q_OS_WIN32
+    if (m_PrintScreenHook != nullptr) {
+        UnhookWindowsHookEx((HHOOK)m_PrintScreenHook);
+        m_PrintScreenHook = nullptr;
+    }
+    s_PrintScreenSession = nullptr;
+#endif
+}
+
+bool Session::isPrintScreenToHost()
+{
+    return QSettings().value("printscreentohost", true).toBool();
+}
+
+bool Session::printScreenGoesToHost() const
+{
+#ifdef Q_OS_WIN32
+    return m_WindowHandle != 0 && GetForegroundWindow() == (HWND)m_WindowHandle && isPrintScreenToHost();
+#else
+    return false;
+#endif
+}
+
+void Session::togglePrintScreenToHost()
+{
+    // Any screen's window can flip it, so start from the stored value
+    StreamingPreferences::get()->printScreenToHost = !isPrintScreenToHost();
+    StreamingPreferences::get()->save();
+    showStatusMessage(StreamingPreferences::get()->printScreenToHost ? "Print Screen goes to the host"
+                                                                     : "Print Screen stays on this PC", true);
 }
 
 void Session::sendCtrlAltDel()
