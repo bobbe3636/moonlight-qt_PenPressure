@@ -21,6 +21,7 @@
 #include <commctrl.h>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #ifndef WM_DPICHANGED
@@ -45,6 +46,7 @@ enum Command {
     CmdCtrlAltDel,
     CmdHideButton,
     CmdHalfBitrate,
+    CmdPrintScreen,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
     CmdShortcutsReset = 299,
@@ -54,6 +56,42 @@ enum Command {
 constexpr UINT_PTR k_ParentSubclassId = 0x4D4C534D; // 'MLSM'
 constexpr int k_ButtonSizeDip = 52;  // includes room around the round button for its glow
 const wchar_t* k_ButtonClass = L"MoonlightStreamMenuButton";
+
+// The menu's look (Parsec-like): dark, an icon beside each command, red for leaving the stream
+constexpr COLORREF k_MenuBack = RGB(28, 28, 30);
+constexpr COLORREF k_MenuHover = RGB(54, 54, 58);
+constexpr COLORREF k_MenuText = RGB(235, 235, 235);
+constexpr COLORREF k_MenuIcon = RGB(205, 205, 210);
+constexpr COLORREF k_MenuDim = RGB(140, 140, 148);
+constexpr COLORREF k_MenuDanger = RGB(255, 96, 96);
+constexpr COLORREF k_MenuLine = RGB(62, 62, 66);
+
+// Glyphs of Segoe Fluent Icons (Windows 11) / Segoe MDL2 Assets (Windows 10)
+namespace Glyph {
+constexpr const wchar_t* FullScreen = L"";
+constexpr const wchar_t* BackToWindow = L"";
+constexpr const wchar_t* Minimize = L"";
+constexpr const wchar_t* Metrics = L"";
+constexpr const wchar_t* Volume = L"";
+constexpr const wchar_t* Mute = L"";
+constexpr const wchar_t* Screens = L"";
+constexpr const wchar_t* Resolution = L"";
+constexpr const wchar_t* Mouse = L"";
+constexpr const wchar_t* Keyboard = L"";
+constexpr const wchar_t* Shortcuts = L"";
+constexpr const wchar_t* Camera = L"";
+constexpr const wchar_t* KeyboardMouse = L"";
+constexpr const wchar_t* Cursor = L"";
+constexpr const wchar_t* Lock = L"";
+constexpr const wchar_t* Paste = L"";
+constexpr const wchar_t* Shield = L"";
+constexpr const wchar_t* Hide = L"";
+constexpr const wchar_t* Show = L"";
+constexpr const wchar_t* Disconnect = L"";
+constexpr const wchar_t* Power = L"";
+constexpr const wchar_t* Check = L"";
+constexpr const wchar_t* Chevron = L"";
+}
 
 // Dark menus on Windows 10 1903+ (undocumented uxtheme ordinals, the same ones Explorer uses)
 void enableDarkMenus()
@@ -101,6 +139,7 @@ public:
 
         enableDarkMenus();
         registerClass();
+        m_MenuBrush = CreateSolidBrush(k_MenuBack);
 
         m_Button = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                                    k_ButtonClass, L"Moonlight menu", WS_POPUP,
@@ -116,6 +155,8 @@ public:
         if (m_Button != nullptr) {
             DestroyWindow(m_Button);
         }
+        destroyMenuFonts();
+        DeleteObject(m_MenuBrush);
     }
 
     void toggle()
@@ -136,7 +177,7 @@ public:
 private:
     // ---- geometry ----
 
-    int buttonSize() const
+    int dpi() const
     {
         // GetDpiForWindow is Windows 10 1607+; look it up so older SDK targets still build
         using GetDpiForWindowFn = UINT (WINAPI*)(HWND);
@@ -150,7 +191,12 @@ private:
             dpi = GetDeviceCaps(dc, LOGPIXELSX);
             ReleaseDC(m_Parent, dc);
         }
-        return MulDiv(k_ButtonSizeDip, dpi, 96);
+        return (int)dpi;
+    }
+
+    int buttonSize() const
+    {
+        return MulDiv(k_ButtonSizeDip, dpi(), 96);
     }
 
     RECT clientRectOnScreen() const
@@ -321,27 +367,225 @@ private:
         return list;
     }
 
-    static void add(HMENU menu, UINT id, const QString& text, bool checked = false, bool radio = false)
+    // Owner-drawn items in the native menu, so keyboard use and submenus work as usual
+    struct Item {
+        std::wstring icon;      // a glyph of the icon font, or none
+        std::wstring text;
+        std::wstring shortcut;  // right-aligned hint
+        bool checked = false;
+        bool danger = false;    // red: leaves the stream
+        bool info = false;      // a grey note, not a command
+        bool submenu = false;
+        bool separator = false;
+    };
+
+    int scale(int dip) const
+    {
+        return MulDiv(dip, m_MenuDpi, 96);
+    }
+
+    static bool hasFont(const wchar_t* face)
+    {
+        LOGFONTW lf = {};
+        lf.lfCharSet = DEFAULT_CHARSET;
+        wcsncpy_s(lf.lfFaceName, face, _TRUNCATE);
+        bool found = false;
+        HDC dc = GetDC(nullptr);
+        EnumFontFamiliesExW(dc, &lf, [](const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM result) -> int {
+            *(bool*)result = true;
+            return 0;
+        }, (LPARAM)&found, 0);
+        ReleaseDC(nullptr, dc);
+        return found;
+    }
+
+    void createMenuFonts()
+    {
+        destroyMenuFonts();
+        m_MenuDpi = dpi();
+        auto font = [this](int px, const wchar_t* face) {
+            return CreateFontW(-scale(px), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, face);
+        };
+        // Windows 11's icon font, or Windows 10's (same glyphs)
+        static const wchar_t* iconFace = hasFont(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
+        m_TextFont = font(14, L"Segoe UI");
+        m_IconFont = font(16, iconFace);
+        m_SmallIconFont = font(11, iconFace);
+    }
+
+    void destroyMenuFonts()
+    {
+        for (HFONT* f : {&m_TextFont, &m_IconFont, &m_SmallIconFont}) {
+            if (*f != nullptr) {
+                DeleteObject(*f);
+                *f = nullptr;
+            }
+        }
+    }
+
+    Item* newItem(const wchar_t* icon, const QString& text, const QString& shortcut = QString())
+    {
+        m_Items.push_back(std::make_unique<Item>());
+        Item* item = m_Items.back().get();
+        item->icon = icon != nullptr ? icon : L"";
+        item->text = text.toStdWString();
+        item->shortcut = shortcut.toStdWString();
+        return item;
+    }
+
+    static void insert(HMENU menu, Item* item, UINT id, HMENU sub = nullptr)
     {
         MENUITEMINFOW mii = {};
         mii.cbSize = sizeof(mii);
-        mii.fMask = MIIM_ID | MIIM_STRING | MIIM_FTYPE | MIIM_STATE;
-        mii.fType = MFT_STRING | (radio ? MFT_RADIOCHECK : 0);
-        mii.fState = checked ? MFS_CHECKED : MFS_UNCHECKED;
+        mii.fMask = MIIM_FTYPE | MIIM_DATA | MIIM_STATE | MIIM_ID | (sub != nullptr ? MIIM_SUBMENU : 0);
+        mii.fType = MFT_OWNERDRAW | (item->separator ? MFT_SEPARATOR : 0);
+        mii.fState = (item->checked ? MFS_CHECKED : 0) | (item->info ? MFS_DISABLED : 0);
         mii.wID = id;
-        std::wstring label = text.toStdWString();
-        mii.dwTypeData = label.data();
+        mii.hSubMenu = sub;
+        mii.dwItemData = (ULONG_PTR)item;
         InsertMenuItemW(menu, GetMenuItemCount(menu), TRUE, &mii);
     }
 
-    static void separator(HMENU menu)
+    void add(HMENU menu, UINT id, const wchar_t* icon, const QString& text, const QString& shortcut = QString(),
+             bool checked = false, bool danger = false)
     {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        Item* item = newItem(icon, text, shortcut);
+        item->checked = checked;
+        item->danger = danger;
+        insert(menu, item, id);
     }
 
-    static void submenu(HMENU menu, HMENU sub, const QString& text)
+    void info(HMENU menu, const QString& text)
     {
-        AppendMenuW(menu, MF_POPUP, (UINT_PTR)sub, text.toStdWString().c_str());
+        Item* item = newItem(nullptr, text);
+        item->info = true;
+        insert(menu, item, 0);
+    }
+
+    void separator(HMENU menu)
+    {
+        Item* item = newItem(nullptr, QString());
+        item->separator = true;
+        insert(menu, item, 0);
+    }
+
+    void submenu(HMENU menu, HMENU sub, const wchar_t* icon, const QString& text)
+    {
+        Item* item = newItem(icon, text);
+        item->submenu = true;
+        insert(menu, item, 0, sub);
+    }
+
+    Item* findItem(ULONG_PTR data) const
+    {
+        for (const auto& item : m_Items) {
+            if ((ULONG_PTR)item.get() == data) {
+                return item.get();
+            }
+        }
+        return nullptr;
+    }
+
+    static void fill(HDC dc, const RECT& rc, COLORREF color)
+    {
+        SetDCBrushColor(dc, color);
+        FillRect(dc, &rc, (HBRUSH)GetStockObject(DC_BRUSH));
+    }
+
+    // Columns (DIPs): icon 10..38, text from 46; on the right a check mark and a submenu arrow
+    bool measureItem(MEASUREITEMSTRUCT* mis)
+    {
+        Item* item = findItem(mis->itemData);
+        if (item == nullptr) {
+            return false;
+        }
+        if (item->separator) {
+            mis->itemWidth = scale(40);
+            mis->itemHeight = scale(9);
+            return true;
+        }
+
+        HDC dc = GetDC(m_Parent);
+        HGDIOBJ old = SelectObject(dc, m_TextFont);
+        SIZE text = {}, shortcut = {};
+        GetTextExtentPoint32W(dc, item->text.c_str(), (int)item->text.size(), &text);
+        if (!item->shortcut.empty()) {
+            GetTextExtentPoint32W(dc, item->shortcut.c_str(), (int)item->shortcut.size(), &shortcut);
+        }
+        SelectObject(dc, old);
+        ReleaseDC(m_Parent, dc);
+
+        mis->itemWidth = scale(46) + text.cx + (shortcut.cx > 0 ? scale(32) + shortcut.cx : 0) + scale(48);
+        mis->itemHeight = scale(item->info ? 26 : 32);
+        return true;
+    }
+
+    bool drawItem(DRAWITEMSTRUCT* dis)
+    {
+        Item* item = findItem(dis->itemData);
+        if (item == nullptr) {
+            return false;
+        }
+        HDC dc = dis->hDC;
+        RECT rc = dis->rcItem;
+        bool hot = (dis->itemState & ODS_SELECTED) && !item->info && !item->separator;
+        fill(dc, rc, hot ? k_MenuHover : k_MenuBack);
+
+        if (item->separator) {
+            int y = (rc.top + rc.bottom) / 2;
+            fill(dc, { rc.left + scale(10), y, rc.right - scale(10), y + std::max(1, scale(1)) }, k_MenuLine);
+            return true;
+        }
+
+        SetBkMode(dc, TRANSPARENT);
+        HGDIOBJ oldFont = SelectObject(dc, m_IconFont);
+        const UINT centered = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+        if (!item->icon.empty()) {
+            RECT r = { rc.left + scale(10), rc.top, rc.left + scale(38), rc.bottom };
+            SetTextColor(dc, item->danger ? k_MenuDanger : k_MenuIcon);
+            DrawTextW(dc, item->icon.c_str(), -1, &r, centered);
+        }
+
+        SelectObject(dc, m_SmallIconFont);
+        if (item->checked) {
+            RECT r = { rc.right - scale(44), rc.top, rc.right - scale(20), rc.bottom };
+            SetTextColor(dc, k_MenuText);
+            DrawTextW(dc, Glyph::Check, -1, &r, centered);
+        }
+        if (item->submenu) {
+            RECT r = { rc.right - scale(24), rc.top, rc.right - scale(6), rc.bottom };
+            SetTextColor(dc, k_MenuIcon);
+            DrawTextW(dc, Glyph::Chevron, -1, &r, centered);
+        }
+
+        SelectObject(dc, m_TextFont);
+        RECT textRect = { rc.left + scale(46), rc.top, rc.right - scale(48), rc.bottom };
+        if (!item->shortcut.empty()) {
+            SetTextColor(dc, k_MenuDim);
+            DrawTextW(dc, item->shortcut.c_str(), -1, &textRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SIZE s = {};
+            GetTextExtentPoint32W(dc, item->shortcut.c_str(), (int)item->shortcut.size(), &s);
+            textRect.right -= s.cx + scale(24);
+        }
+        SetTextColor(dc, item->info ? k_MenuDim : item->danger ? k_MenuDanger : k_MenuText);
+        DrawTextW(dc, item->text.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        SelectObject(dc, oldFont);
+
+        if (item->submenu) {
+            // Our chevron only: Windows draws its arrow afterwards, clipped away here
+            ExcludeClipRect(dc, rc.left, rc.top, rc.right, rc.bottom);
+        }
+        return true;
+    }
+
+    void styleMenu(HMENU menu)
+    {
+        MENUINFO mi = {};
+        mi.cbSize = sizeof(mi);
+        mi.fMask = MIM_BACKGROUND | MIM_APPLYTOSUBMENUS;
+        mi.hbrBack = m_MenuBrush;
+        SetMenuInfo(menu, &mi);
     }
 
     void showMenu(int x, int y, UINT align)
@@ -352,71 +596,80 @@ private:
         }
 
         // Each command shows its current (user-rebindable) shortcut
-        auto keyOf = [](const char* id) { return Shortcuts::menuSuffix(id); };
+        auto keyOf = [](const char* id) { return Shortcuts::binding(id); };
+        createMenuFonts();
+        m_Items.clear();
         HMENU menu = CreatePopupMenu();
 
         // Check marks show what's on; stream-wide state lives in the main window's session
         QSettings shared;
         bool soundOn = m_Companion ? !shared.value("streammenu/muted", false).toBool() : !m_Session->isAudioMuted();
         int screenCount = m_Companion ? shared.value("extrascreens", 0).toInt() + 1 : m_Session->extraScreenCount() + 1;
+        bool fullScreen = m_Session->isFullScreen();
 
-        add(menu, CmdFullScreen, "Fullscreen" + keyOf("fullscreen_toggle"), m_Session->isFullScreen());
-        add(menu, CmdMinimize, "Minimize" + keyOf("minimize"));
-        add(menu, CmdMetrics, "Metrics" + keyOf("metrics"), m_Session->isStatsOverlayVisible());
-        add(menu, CmdSound, "Sound", soundOn);
+        add(menu, CmdHideButton, canShowButton() ? Glyph::Hide : Glyph::Show,
+            canShowButton() ? "Hide button" : "Show the menu button", keyOf("menu_button"));
+        add(menu, CmdFullScreen, fullScreen ? Glyph::BackToWindow : Glyph::FullScreen, "Fullscreen",
+            keyOf("fullscreen_toggle"), fullScreen);
+        add(menu, CmdMinimize, Glyph::Minimize, "Minimize", keyOf("minimize"));
+        add(menu, CmdSound, soundOn ? Glyph::Volume : Glyph::Mute, "Sound", QString(), soundOn);
+        add(menu, CmdMetrics, Glyph::Metrics, "Metrics", keyOf("metrics"), m_Session->isStatsOverlayVisible());
         separator(menu);
 
         HMENU screens = CreatePopupMenu();
         for (int n = 1; n <= 3; n++) {
-            add(screens, CmdScreens1 + n - 1, n == 1 ? QString("1 screen") : QString("%1 screens").arg(n), n == screenCount, true);
+            add(screens, CmdScreens1 + n - 1, nullptr, n == 1 ? QString("1 screen") : QString("%1 screens").arg(n),
+                QString(), n == screenCount);
         }
         separator(screens);
-        add(screens, CmdHalfBitrate, "Extra screens at half bitrate (next launch)",
+        add(screens, CmdHalfBitrate, nullptr, "Extra screens at half bitrate (next launch)", QString(),
             shared.value("extrascreenshalfbitrate", false).toBool());
-        submenu(menu, screens, "Screens");
+        submenu(menu, screens, Glyph::Screens, "Screens");
 
         HMENU resolutionMenu = CreatePopupMenu();
         auto list = resolutions();
         for (size_t i = 0; i < list.size(); i++) {
             bool current = list[i].w == m_Session->streamWidth() && list[i].h == m_Session->streamHeight();
-            add(resolutionMenu, CmdResolution + (UINT)i, list[i].label, current, true);
+            add(resolutionMenu, CmdResolution + (UINT)i, nullptr, list[i].label, QString(), current);
         }
         separator(resolutionMenu);
-        AppendMenuW(resolutionMenu, MF_STRING | MF_GRAYED, 0, L"Changing it reconnects (a few seconds)");
-        submenu(menu, resolutionMenu, "Resolution");
+        info(resolutionMenu, "Changing it reconnects (a few seconds)");
+        submenu(menu, resolutionMenu, Glyph::Resolution, "Resolution");
         separator(menu);
 
-        add(menu, CmdImmersive, "Immersive mode (capture mouse)" + keyOf("immersive"), m_Session->isImmersive());
-        add(menu, CmdSystemKeys, "Keyboard immersive mode (Alt+Tab, Win key to the stream)" + keyOf("keyboard_immersive"), m_Session->isKeyboardImmersive());
-        add(menu, CmdReleaseInput, "Release mouse and keyboard" + keyOf("release"));
-        add(menu, CmdCursor, "Show local cursor" + keyOf("cursor"), m_Session->isLocalCursorVisible());
-        add(menu, CmdLockCursor, "Lock cursor to window" + keyOf("lock_cursor"), m_Session->isCursorLocked());
-        add(menu, CmdPaste, "Paste clipboard as text" + keyOf("paste"));
-        add(menu, CmdCtrlAltDel, QString("Send Ctrl+Alt+Del") + keyOf("ctrl_alt_del"));
+        add(menu, CmdImmersive, Glyph::Mouse, "Immersive mode (capture mouse)", keyOf("immersive"), m_Session->isImmersive());
+        add(menu, CmdSystemKeys, Glyph::Keyboard, "Keyboard immersive (Alt+Tab, Win key)", keyOf("keyboard_immersive"),
+            m_Session->isKeyboardImmersive());
+        add(menu, CmdPrintScreen, Glyph::Camera, "Print Screen goes to the host", QString(), Session::isPrintScreenToHost());
+        add(menu, CmdReleaseInput, Glyph::KeyboardMouse, "Release mouse and keyboard", keyOf("release"));
+        add(menu, CmdCursor, Glyph::Cursor, "Show local cursor", keyOf("cursor"), m_Session->isLocalCursorVisible());
+        add(menu, CmdLockCursor, Glyph::Lock, "Lock cursor to window", keyOf("lock_cursor"), m_Session->isCursorLocked());
+        add(menu, CmdPaste, Glyph::Paste, "Paste clipboard as text", keyOf("paste"));
+        add(menu, CmdCtrlAltDel, Glyph::Shield, "Send Ctrl+Alt+Del", keyOf("ctrl_alt_del"));
 
         HMENU shortcutsMenu = CreatePopupMenu();
         const auto& actions = Shortcuts::actions();
         for (int i = 0; i < actions.size(); i++) {
             QString binding = Shortcuts::binding(actions[i].id);
-            add(shortcutsMenu, CmdShortcut + (UINT)i,
-                QString(actions[i].label) + "\t" + (binding.isEmpty() ? QString("None") : binding));
+            add(shortcutsMenu, CmdShortcut + (UINT)i, nullptr, actions[i].label, binding.isEmpty() ? QString("None") : binding);
         }
         separator(shortcutsMenu);
-        add(shortcutsMenu, CmdShortcutsReset, "Reset all to defaults");
+        add(shortcutsMenu, CmdShortcutsReset, nullptr, "Reset all to defaults");
         separator(shortcutsMenu);
-        AppendMenuW(shortcutsMenu, MF_STRING | MF_GRAYED, 0, L"Pick one, then press the new keys");
-        submenu(menu, shortcutsMenu, "Keyboard shortcuts");
+        info(shortcutsMenu, "Pick one, then press the new keys");
+        submenu(menu, shortcutsMenu, Glyph::Shortcuts, "Keyboard shortcuts");
         separator(menu);
 
-        add(menu, CmdHideButton, (canShowButton() ? "Hide this button" : "Show the menu button") + keyOf("menu_button"));
-        add(menu, CmdDisconnect, "Disconnect" + keyOf("disconnect"));
-        add(menu, CmdQuitAppAndExit, "Quit app and exit Moonlight" + keyOf("quit_exit"));
+        add(menu, CmdDisconnect, Glyph::Disconnect, "Disconnect", keyOf("disconnect"), false, true);
+        add(menu, CmdQuitAppAndExit, Glyph::Power, "Quit app and exit Moonlight", keyOf("quit_exit"), false, true);
+        styleMenu(menu);
 
         // The stream window owns the menu, so it keeps keyboard focus
         SetForegroundWindow(m_Parent);
         UINT cmd = (UINT)TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | align,
                                           x, y, m_Parent, nullptr);
         DestroyMenu(menu); // also destroys the submenus
+        m_Items.clear();
         run(cmd, list);
     }
 
@@ -501,6 +754,7 @@ private:
         case CmdPaste:          m_Session->runShortcutCommand('V'); break;
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
         case CmdHideButton:     toggle(); break;
+        case CmdPrintScreen:    m_Session->togglePrintScreenToHost(); break;
         case CmdHalfBitrate:
             // Any screen's window can flip it, so start from the stored value
             StreamingPreferences::get()->extraScreensHalfBitrate =
@@ -636,6 +890,17 @@ private:
             return 0;
         }
         switch (msg) {
+        case WM_MEASUREITEM:
+            // The menu's owner-drawn items
+            if (((MEASUREITEMSTRUCT*)lParam)->CtlType == ODT_MENU && self->measureItem((MEASUREITEMSTRUCT*)lParam)) {
+                return TRUE;
+            }
+            break;
+        case WM_DRAWITEM:
+            if (((DRAWITEMSTRUCT*)lParam)->CtlType == ODT_MENU && self->drawItem((DRAWITEMSTRUCT*)lParam)) {
+                return TRUE;
+            }
+            break;
         case WM_WINDOWPOSCHANGED:
         case WM_SIZE:
         case WM_DPICHANGED:
@@ -666,6 +931,14 @@ private:
     int m_RenderedSize = 0;
     bool m_Companion = false;   // an extra screen's window: stream-wide commands go to m_Main
     HWND m_Main = nullptr;
+
+    // The menu while it's open: its items, and fonts for the monitor's DPI
+    std::vector<std::unique_ptr<Item>> m_Items;
+    HFONT m_TextFont = nullptr;
+    HFONT m_IconFont = nullptr;
+    HFONT m_SmallIconFont = nullptr;
+    HBRUSH m_MenuBrush = nullptr;
+    int m_MenuDpi = 96;
 };
 
 StreamMenu* streamMenuCreate(Session* session, SDL_Window* window)

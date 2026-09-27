@@ -56,6 +56,7 @@
 #define SER_IMMERSIVEMODE "immersivemode"
 #define SER_PENINPUTMODE "peninputmode"
 #define SER_STREAMMENUBUTTON "streammenubutton"
+#define SER_PRINTSCREENTOHOST "printscreentohost"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -163,6 +164,8 @@ void StreamingPreferences::reload()
     immersiveMode = settings.value(SER_IMMERSIVEMODE, false).toBool();
     penInputMode = qBound(0, settings.value(SER_PENINPUTMODE, 0).toInt(), 2);
     showStreamMenuButton = settings.value(SER_STREAMMENUBUTTON, true).toBool();
+    printScreenToHost = settings.value(SER_PRINTSCREENTOHOST, true).toBool();
+    m_LoadedPrintScreenToHost = printScreenToHost;
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
@@ -384,6 +387,11 @@ void StreamingPreferences::save()
     settings.setValue(SER_IMMERSIVEMODE, immersiveMode);
     settings.setValue(SER_PENINPUTMODE, penInputMode);
     settings.setValue(SER_STREAMMENUBUTTON, showStreamMenuButton);
+    if (printScreenToHost != m_LoadedPrintScreenToHost) {
+        // Same as above: any screen's menu can flip it
+        settings.setValue(SER_PRINTSCREENTOHOST, printScreenToHost);
+        m_LoadedPrintScreenToHost = printScreenToHost;
+    }
 
     if (m_Companion) {
         // Keep the user's own values for what this extra screen's window overrides. The

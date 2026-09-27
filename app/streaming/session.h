@@ -160,6 +160,12 @@ public:
     void reconnectWithResolution(int width, int height);
     void sendCtrlAltDel();
 
+    // Print Screen in this stream window goes to the host (not this PC's screenshot tool);
+    // shared by every screen's window
+    static bool isPrintScreenToHost();
+    void togglePrintScreenToHost();
+    bool printScreenGoesToHost() const;
+
     // Stream menu: pick a new keyboard shortcut / reload them after a reset
     void startShortcutCapture(const QString& id, const QString& label);
     void reloadShortcuts();
@@ -171,6 +177,10 @@ public:
 
 private:
     class StreamMenu* m_StreamMenu = nullptr;
+    void installPrintScreenHook();
+    void removePrintScreenHook();
+    void* m_PrintScreenHook = nullptr;  // HHOOK
+    quintptr m_WindowHandle = 0;        // HWND of the stream window
     std::atomic<bool> m_UserAudioMuted { false };  // muted from the stream menu (independent of focus muting)
     bool m_IsCompanion = false;
     quintptr m_CompanionParentWindow = 0;

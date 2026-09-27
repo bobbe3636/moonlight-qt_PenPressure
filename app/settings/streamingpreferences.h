@@ -170,6 +170,7 @@ public:
     Q_PROPERTY(bool immersiveMode MEMBER immersiveMode NOTIFY immersiveModeChanged)
     Q_PROPERTY(int penInputMode MEMBER penInputMode NOTIFY penInputModeChanged)
     Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
+    Q_PROPERTY(bool printScreenToHost MEMBER printScreenToHost NOTIFY printScreenToHostChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
@@ -208,6 +209,7 @@ public:
     bool immersiveMode; // capture mouse/keyboard in the stream window (off: the mouse moves freely in and out)
     int penInputMode; // 0 automatic, 1 Windows Ink (+ raw Wacom reports), 2 Wintab
     bool showStreamMenuButton;
+    bool printScreenToHost; // Print Screen in a stream window goes to the host, not this PC's screenshot
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
@@ -261,6 +263,7 @@ signals:
     void immersiveModeChanged();
     void penInputModeChanged();
     void showStreamMenuButtonChanged();
+    void printScreenToHostChanged();
     void languageChanged();
     void rendererSelectionChanged();
 
@@ -272,6 +275,7 @@ private:
     QQmlEngine* m_QmlEngine;
 
     bool m_LoadedExtraScreensHalfBitrate = false;
+    bool m_LoadedPrintScreenToHost = true;
     bool m_Companion = false;
     WindowMode m_SavedWindowMode = WM_WINDOWED;
     bool m_SavedAbsoluteMouseMode = false;
