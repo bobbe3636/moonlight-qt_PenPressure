@@ -18,7 +18,7 @@ public:
 
     // For an extra screen's window: windowed, absolute mouse, no companions of its own and
     // optionally half bitrate, for this session only (save() keeps the user's own values)
-    void applyCompanionOverrides();
+    void applyCompanionOverrides(int screen);
 
     // Rebindable stream shortcuts (see settings/shortcuts.h), for the settings page
     Q_INVOKABLE QVariantList shortcutActions() const;
@@ -281,5 +281,7 @@ private:
     bool m_SavedAbsoluteMouseMode = false;
     int m_SavedExtraScreens = 0;
     int m_SavedBitrateKbps = 0;
+    int m_SavedWidth = 0;
+    int m_SavedHeight = 0;
 };
 

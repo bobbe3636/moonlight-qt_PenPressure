@@ -399,6 +399,8 @@ void StreamingPreferences::save()
         settings.setValue(SER_WINDOWMODE, static_cast<int>(m_SavedWindowMode));
         settings.setValue(SER_EXTRASCREENS, m_SavedExtraScreens);
         settings.setValue(SER_BITRATE, m_SavedBitrateKbps);
+        settings.setValue(SER_WIDTH, m_SavedWidth);
+        settings.setValue(SER_HEIGHT, m_SavedHeight);
         if (absoluteMouseMode) {
             settings.setValue(SER_ABSMOUSEMODE, m_SavedAbsoluteMouseMode);
         }
@@ -432,13 +434,24 @@ void StreamingPreferences::resetShortcuts()
     Shortcuts::resetAll();
 }
 
-void StreamingPreferences::applyCompanionOverrides()
+void StreamingPreferences::applyCompanionOverrides(int screen)
 {
     m_Companion = true;
     m_SavedWindowMode = windowMode;
     m_SavedAbsoluteMouseMode = absoluteMouseMode;
     m_SavedExtraScreens = extraScreens;
     m_SavedBitrateKbps = bitrateKbps;
+    m_SavedWidth = width;
+    m_SavedHeight = height;
+
+    // This screen's own resolution, when one was picked in its stream menu
+    QSettings settings;
+    int screenWidth = settings.value(QString("screens/%1/width").arg(screen), 0).toInt();
+    int screenHeight = settings.value(QString("screens/%1/height").arg(screen), 0).toInt();
+    if (screenWidth > 0 && screenHeight > 0) {
+        width = screenWidth;
+        height = screenHeight;
+    }
 
     // Its own window, absolute mouse so the cursor moves freely between the screens' windows,
     // and it never opens extra screens itself

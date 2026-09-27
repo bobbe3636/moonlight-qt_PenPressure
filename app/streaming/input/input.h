@@ -205,6 +205,7 @@ public:
         KeyComboFullScreen,
         KeyComboWindowed,
         KeyComboCtrlAltDel,
+        KeyComboOpenStreamMenu,
         KeyComboMax
     };
 

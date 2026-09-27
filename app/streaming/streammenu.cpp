@@ -47,6 +47,7 @@ enum Command {
     CmdHideButton,
     CmdHalfBitrate,
     CmdPrintScreen,
+    CmdResetWindows,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
     CmdShortcutsReset = 299,
@@ -172,6 +173,27 @@ public:
         StreamingPreferences::get()->showStreamMenuButton = m_Visible;
         StreamingPreferences::get()->save();
         reposition();
+    }
+
+    void openFromShortcut()
+    {
+        if (m_Visible && canShowButton() && m_Button != nullptr) {
+            openMenuFromButton();
+            return;
+        }
+        POINT pt;
+        GetCursorPos(&pt);
+        showMenu(pt.x, pt.y, TPM_LEFTALIGN | TPM_TOPALIGN);
+    }
+
+    bool forwardShortcut(char letter)
+    {
+        UINT cmd = letter == 'Q' ? CmdDisconnect : letter == 'E' ? CmdQuitAppAndExit : 0;
+        if (!m_Companion || cmd == 0 || m_Main == nullptr || !IsWindow(m_Main)) {
+            return false;
+        }
+        PostMessageW(m_Main, commandMessage(), MAKEWPARAM(cmd, m_Session->screenNumber()), 0);
+        return true;
     }
 
 private:
@@ -470,9 +492,9 @@ private:
         insert(menu, item, 0);
     }
 
-    void submenu(HMENU menu, HMENU sub, const wchar_t* icon, const QString& text)
+    void submenu(HMENU menu, HMENU sub, const wchar_t* icon, const QString& text, const QString& hint = QString())
     {
-        Item* item = newItem(icon, text);
+        Item* item = newItem(icon, text, hint);
         item->submenu = true;
         insert(menu, item, 0, sub);
     }
@@ -624,6 +646,8 @@ private:
         separator(screens);
         add(screens, CmdHalfBitrate, nullptr, "Extra screens at half bitrate (next launch)", QString(),
             shared.value("extrascreenshalfbitrate", false).toBool());
+        separator(screens);
+        add(screens, CmdResetWindows, nullptr, "Reset window positions");
         submenu(menu, screens, Glyph::Screens, "Screens");
 
         HMENU resolutionMenu = CreatePopupMenu();
@@ -633,8 +657,9 @@ private:
             add(resolutionMenu, CmdResolution + (UINT)i, nullptr, list[i].label, QString(), current);
         }
         separator(resolutionMenu);
-        info(resolutionMenu, "Changing it reconnects (a few seconds)");
-        submenu(menu, resolutionMenu, Glyph::Resolution, "Resolution");
+        info(resolutionMenu, "Changing it reconnects this screen (a few seconds)");
+        submenu(menu, resolutionMenu, Glyph::Resolution, "Resolution",
+                QString("%1 x %2").arg(m_Session->streamWidth()).arg(m_Session->streamHeight()));
         separator(menu);
 
         add(menu, CmdImmersive, Glyph::Mouse, "Immersive mode (capture mouse)", keyOf("immersive"), m_Session->isImmersive());
@@ -677,7 +702,7 @@ private:
     // forwards them there. Resolutions travel as width/height in lParam.
     static bool isStreamWide(UINT cmd)
     {
-        return cmd == CmdDisconnect || cmd == CmdQuitAppAndExit || cmd == CmdSound ||
+        return cmd == CmdDisconnect || cmd == CmdQuitAppAndExit || cmd == CmdSound || cmd == CmdResetWindows ||
                (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) || cmd == CmdResolution;
     }
 
@@ -687,11 +712,26 @@ private:
         return message;
     }
 
-    void runStreamWide(UINT cmd, LPARAM lParam)
+    // The main window's notices to the extra screens' windows (Session posts them): a new main
+    // window took them over; put your window back in a default place
+    static UINT mainWindowMessage()
+    {
+        static UINT message = RegisterWindowMessageW(L"MoonlightStreamMenuMainWindow");
+        return message;
+    }
+
+    static UINT resetWindowMessage()
+    {
+        static UINT message = RegisterWindowMessageW(L"MoonlightStreamMenuResetWindow");
+        return message;
+    }
+
+    // screen: the screen whose menu asked (1 = the main window)
+    void runStreamWide(UINT cmd, LPARAM lParam, int screen)
     {
         if (m_Companion) {
             if (m_Main != nullptr && IsWindow(m_Main)) {
-                PostMessageW(m_Main, commandMessage(), cmd, lParam);
+                PostMessageW(m_Main, commandMessage(), MAKEWPARAM(cmd, screen), lParam);
             }
             return;
         }
@@ -704,9 +744,11 @@ private:
             QSettings().setValue("streammenu/muted", m_Session->isAudioMuted());
             break;
         case CmdResolution:
-            if (LOWORD(lParam) != m_Session->streamWidth() || HIWORD(lParam) != m_Session->streamHeight()) {
-                m_Session->reconnectWithResolution(LOWORD(lParam), HIWORD(lParam));
-            }
+            // Only the screen that asked reconnects, at its new resolution
+            m_Session->setScreenResolution(screen < 2 ? 1 : screen, LOWORD(lParam), HIWORD(lParam));
+            break;
+        case CmdResetWindows:
+            m_Session->resetWindowPlacements();
             break;
         default:
             if (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) {
@@ -733,11 +775,13 @@ private:
 
         if (cmd >= CmdResolution && cmd < CmdResolution + list.size()) {
             const auto& r = list[cmd - CmdResolution];
-            runStreamWide(CmdResolution, MAKELPARAM(r.w, r.h));
+            if (r.w != m_Session->streamWidth() || r.h != m_Session->streamHeight()) {
+                runStreamWide(CmdResolution, MAKELPARAM(r.w, r.h), m_Session->screenNumber());
+            }
             return;
         }
         if (isStreamWide(cmd)) {
-            runStreamWide(cmd, 0);
+            runStreamWide(cmd, 0, m_Session->screenNumber());
             return;
         }
 
@@ -885,8 +929,17 @@ private:
     {
         auto self = (StreamMenu*)refData;
         if (msg == commandMessage() && !self->m_Companion) {
-            // A stream-wide command from an extra screen's menu
-            self->runStreamWide((UINT)wParam, lParam);
+            // A stream-wide command from an extra screen's menu (low word), and its screen
+            self->runStreamWide(LOWORD(wParam), lParam, HIWORD(wParam));
+            return 0;
+        }
+        if (msg == mainWindowMessage() && self->m_Companion) {
+            // A new main window took this screen over (only the main screen reconnected)
+            self->m_Main = (HWND)wParam;
+            return 0;
+        }
+        if (msg == resetWindowMessage()) {
+            self->m_Session->resetOwnWindowPlacement();
             return 0;
         }
         switch (msg) {
@@ -963,10 +1016,24 @@ void streamMenuToggle(StreamMenu* menu)
     }
 }
 
+void streamMenuOpen(StreamMenu* menu)
+{
+    if (menu != nullptr) {
+        menu->openFromShortcut();
+    }
+}
+
+bool streamMenuForwardShortcut(StreamMenu* menu, char letter)
+{
+    return menu != nullptr && menu->forwardShortcut(letter);
+}
+
 #else
 
 StreamMenu* streamMenuCreate(Session*, SDL_Window*) { return nullptr; }
 void streamMenuDestroy(StreamMenu*) {}
 void streamMenuToggle(StreamMenu*) {}
+void streamMenuOpen(StreamMenu*) {}
+bool streamMenuForwardShortcut(StreamMenu*, char) { return false; }
 
 #endif

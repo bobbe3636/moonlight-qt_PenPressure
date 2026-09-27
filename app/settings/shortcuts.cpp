@@ -8,6 +8,7 @@ const QVector<Action>& actions()
 {
     static const QVector<Action> list {
         { "menu_button",        "Show / hide the menu button",        "Ctrl+Alt+Shift+B" },
+        { "open_menu",          "Open the stream menu",               "Ctrl+Alt+Shift+O" },
         { "fullscreen_toggle",  "Switch fullscreen / windowed",       "Ctrl+Alt+Shift+X" },
         { "fullscreen",         "Go fullscreen",                      "" },
         { "windowed",           "Go windowed",                        "" },

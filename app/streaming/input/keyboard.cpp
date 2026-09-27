@@ -39,6 +39,7 @@ const struct {
     { SdlInputHandler::KeyComboFullScreen,              "fullscreen",         'F', true },
     { SdlInputHandler::KeyComboWindowed,                "windowed",           'W', true },
     { SdlInputHandler::KeyComboCtrlAltDel,              "ctrl_alt_del",       0,   false },
+    { SdlInputHandler::KeyComboOpenStreamMenu,          "open_menu",          'O', false },
 };
 
 int modifierGroups(Uint16 mod)
@@ -161,6 +162,11 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
     case KeyComboQuit:
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected quit key combo");
+
+        // In an extra screen's window: every screen disconnects, as from the menu
+        if (Session::get()->forwardToMainWindow('Q')) {
+            break;
+        }
 
         // Push a quit event to the main loop
         SDL_Event event;
@@ -285,6 +291,11 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected quitAndExit key combo");
 
+        // In an extra screen's window: every screen quits, as from the menu
+        if (Session::get()->forwardToMainWindow('E')) {
+            break;
+        }
+
         // Indicate that we want to exit afterwards
         Session::get()->setShouldExit(true);
 
@@ -314,6 +325,14 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected stream menu toggle combo");
         Session::get()->toggleStreamMenu();
+        break;
+
+    case KeyComboOpenStreamMenu:
+        // Also in immersive mode, where the mouse can't reach the button: the menu releases it
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected open stream menu combo");
+        raiseAllKeys();
+        Session::get()->openStreamMenu();
         break;
 
     case KeyComboFullScreen:

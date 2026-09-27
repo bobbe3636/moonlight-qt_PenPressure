@@ -9,7 +9,9 @@
 #include <SDL_syswm.h>
 #include "utils.h"
 #include "path.h"
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QSettings>
 
 #ifdef HAVE_FFMPEG
@@ -1325,6 +1327,17 @@ private:
             emit m_Session->sessionFinished(m_Session->m_PortTestResults);
         }
 
+        // A reconnect for a new resolution: end the host app too, so the host builds this
+        // screen's display anew (resuming would keep the old one, at the old resolution)
+        if (!shouldQuit && m_Session->m_QuitAppBeforeRelaunch) {
+            NvHTTP http(m_Session->m_Computer);
+            try {
+                http.quitApp();
+            } catch (const GfeHttpResponseException&) {
+            } catch (const QtNetworkReplyException&) {
+            }
+        }
+
         // Reconnect requested from the stream menu (e.g. a new resolution): the previous
         // connection is fully stopped, so the host sees a clean new session
         if (!m_Session->m_RelaunchArgs.isEmpty()) {
@@ -1899,6 +1912,10 @@ void Session::exec()
 #endif
     }
 
+    // Where this screen's window was when it last closed: that monitor, place and size,
+    // fullscreen or not (instead of centered on Moonlight's own screen every time)
+    restoreWindowPlacement(x, y, width, height, defaultWindowFlags);
+
     // We use only the computer name on macOS to match Apple conventions where the
     // app name is featured in the menu bar and the document name is in the title bar.
 #ifdef Q_OS_DARWIN
@@ -2446,6 +2463,7 @@ DispatchDeferredCleanup:
 
     // This must be called after the decoder is deleted, because
     // the renderer may want to interact with the window
+    saveWindowPlacement();
     removePrintScreenHook();
     streamMenuDestroy(m_StreamMenu);
     m_StreamMenu = nullptr;
@@ -2458,8 +2476,14 @@ DispatchDeferredCleanup:
 
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 
-    // The extra screens' windows close with the main stream
-    stopCompanionScreens();
+    // The extra screens' windows close with the main stream, unless only the main screen
+    // reconnects: then the new main window takes them over
+    if (m_HandOverCompanions) {
+        handOverCompanions();
+    }
+    else {
+        stopCompanionScreens();
+    }
 
     // Cleanup can take a while, so dispatch it to a worker thread.
     // When it is complete, it will release our s_ActiveSessionSemaphore
@@ -2469,13 +2493,12 @@ DispatchDeferredCleanup:
 
 void Session::startCompanionScreens()
 {
-    int count = m_IsCompanion ? 0 : m_Preferences->extraScreens;
-    for (int n = 1; n <= count; n++) {
-        startCompanionScreen(n + 1);
+    if (!m_IsCompanion) {
+        takeOverCompanions(m_Preferences->extraScreens);
     }
 }
 
-void Session::startCompanionScreen(int screen)
+qint64 Session::startCompanionScreen(int screen)
 {
     QString uuid, address;
     uint16_t httpPort, httpsPort;
@@ -2507,15 +2530,24 @@ void Session::startCompanionScreen(int screen)
     }
 #endif
 
-    auto process = new QProcess();
-    // Its log goes to its own file (a redirected Moonlight logs to stderr): readable, and its
-    // output can't fill a pipe nobody reads, which would block the companion
-    process->setProcessChannelMode(QProcess::MergedChannels);
-    process->setStandardOutputFile(QDir(Path::getLogDir()).filePath(QString("Moonlight-screen%1.log").arg(screen)));
-    process->start(QCoreApplication::applicationFilePath(), args);
-    m_CompanionProcesses.append(process);
+    // Detached, so a new main window can take it over when only the main screen reconnects.
+    // Its log goes to its own file (a redirected Moonlight logs to stderr), and its output
+    // can't fill a pipe nobody reads, which would block it.
+    QString log = QDir(Path::getLogDir()).filePath(QString("Moonlight-screen%1.log").arg(screen));
+    QFile::remove(log);
+    QProcess process;
+    process.setProgram(QCoreApplication::applicationFilePath());
+    process.setArguments(args);
+    process.setStandardOutputFile(log, QIODevice::Append);
+    process.setStandardErrorFile(log, QIODevice::Append);
+    qint64 pid = 0;
+    if (!process.startDetached(&pid)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Couldn't start the window for screen %d", screen);
+        return 0;
+    }
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Started companion window for screen %d (port %d)",
                 screen, httpPort + offset);
+    return pid;
 }
 
 // ---- Stream menu ----
@@ -2576,11 +2608,11 @@ void Session::toggleKeyboardImmersive()
 
 int Session::extraScreenCount() const
 {
-    return m_CompanionProcesses.size();
+    return m_Companions.size();
 }
 
-static void askCompanionToClose(QProcess* process);
-static void finishCompanion(QProcess* process);
+static void askCompanionToClose(qint64 pid);
+static void finishCompanion(qint64 pid);
 
 void Session::setExtraScreenCount(int count)
 {
@@ -2589,21 +2621,23 @@ void Session::setExtraScreenCount(int count)
     m_Preferences->save();
 
     // Close screens above the new count, open the missing ones (screens 2, 3 in order)
-    while (m_CompanionProcesses.size() > count) {
-        QProcess* process = m_CompanionProcesses.takeLast();
-        askCompanionToClose(process);
-        finishCompanion(process);
+    while (m_Companions.size() > count) {
+        Companion companion = m_Companions.takeLast();
+        askCompanionToClose(companion.pid);
+        finishCompanion(companion.pid);
     }
-    while (m_CompanionProcesses.size() < count) {
-        startCompanionScreen(m_CompanionProcesses.size() + 2);
+    while (m_Companions.size() < count) {
+        int screen = m_Companions.size() + 2;
+        m_Companions.append({ screen, startCompanionScreen(screen) });
     }
 }
 
 void Session::reconnectWithResolution(int width, int height)
 {
-    // The host builds its (virtual) display at the resolution we connect with, so a new
-    // resolution means a new connection: save it, end this stream without quitting the host
-    // app, and start the same app again once this session is cleaned up.
+    // The host builds this screen's (virtual) display at the resolution we connect with, so a
+    // new resolution means a new connection: save it, end this stream and the host app (the
+    // host then builds the display anew), and start the same app again once this session is
+    // cleaned up. The extra screens' windows keep streaming: the new main window takes them over.
     m_Preferences->width = width;
     m_Preferences->height = height;
     m_Preferences->save();
@@ -2612,6 +2646,8 @@ void Session::reconnectWithResolution(int width, int height)
         QReadLocker lock(&m_Computer->lock);
         m_RelaunchArgs = QStringList { "stream", m_Computer->uuid, m_App.name };
     }
+    m_HandOverCompanions = true;
+    m_QuitAppBeforeRelaunch = true;
     setShouldExit(false);
 
     SDL_Event event;
@@ -2716,42 +2752,330 @@ void Session::sendCtrlAltDel()
     LiSendKeyboardEvent2(0x8000 | 0xA2, KEY_ACTION_UP, 0, 0);
 }
 
-// Ask a companion's windows to close: its stream then ends with a proper disconnect, so the
-// host ends that screen at once (a killed window only times out on the host, and a quick
-// reconnect could find the old session still there)
-static void askCompanionToClose(QProcess* process)
+// Post a message to a companion's windows (its stream window and its menu button)
+static void postToCompanion(qint64 pid, UINT message, WPARAM wParam)
 {
 #ifdef Q_OS_WIN32
-    EnumWindows([](HWND hwnd, LPARAM pid) -> BOOL {
+    struct Post {
+        DWORD pid;
+        UINT message;
+        WPARAM wParam;
+    } post { (DWORD)pid, message, wParam };
+    EnumWindows([](HWND hwnd, LPARAM param) -> BOOL {
+        auto post = (const Post*)param;
         DWORD windowPid = 0;
         GetWindowThreadProcessId(hwnd, &windowPid);
-        if (windowPid == (DWORD)pid && IsWindowVisible(hwnd)) {
-            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        if (windowPid == post->pid && IsWindowVisible(hwnd)) {
+            PostMessageW(hwnd, post->message, post->wParam, 0);
         }
         return TRUE;
-    }, (LPARAM)process->processId());
+    }, (LPARAM)&post);
 #else
-    process->terminate();
+    Q_UNUSED(pid);
+    Q_UNUSED(message);
+    Q_UNUSED(wParam);
 #endif
 }
 
-// Close a companion that was asked to (kill it if it doesn't go within a few seconds)
-static void finishCompanion(QProcess* process)
+// Ask a companion's windows to close: its stream then ends with a proper disconnect, so the
+// host ends that screen at once (a killed window only times out on the host, and a quick
+// reconnect could find the old session still there)
+static void askCompanionToClose(qint64 pid)
 {
-    if (!process->waitForFinished(4000)) {
-        process->kill();
-        process->waitForFinished(3000);
+#ifdef Q_OS_WIN32
+    if (pid != 0) {
+        postToCompanion(pid, WM_CLOSE, 0);
     }
-    delete process;
+#else
+    Q_UNUSED(pid);
+#endif
 }
+
+// Wait for a companion that was asked to close (end it if it doesn't go within 4 s)
+static void finishCompanion(qint64 pid)
+{
+#ifdef Q_OS_WIN32
+    HANDLE process = pid != 0 ? OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE, FALSE, (DWORD)pid) : nullptr;
+    if (process == nullptr) {
+        return;  // already gone
+    }
+    if (WaitForSingleObject(process, 4000) == WAIT_TIMEOUT) {
+        TerminateProcess(process, 1);
+        WaitForSingleObject(process, 3000);
+    }
+    CloseHandle(process);
+#else
+    Q_UNUSED(pid);
+#endif
+}
+
+// A companion another main window left running: still there, and a Moonlight process
+static bool isRunningCompanion(qint64 pid)
+{
+#ifdef Q_OS_WIN32
+    HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    if (process == nullptr) {
+        return false;
+    }
+    bool ours = false;
+    if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT) {
+        wchar_t path[MAX_PATH];
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+            ours = QDir::toNativeSeparators(QString::fromWCharArray(path, (int)size))
+                       .compare(QDir::toNativeSeparators(QCoreApplication::applicationFilePath()), Qt::CaseInsensitive) == 0;
+        }
+    }
+    CloseHandle(process);
+    return ours;
+#else
+    Q_UNUSED(pid);
+    return false;
+#endif
+}
+
+#ifdef Q_OS_WIN32
+// The main window's notices to the companions' windows (StreamMenu handles them)
+static UINT mainWindowMessage()
+{
+    static UINT message = RegisterWindowMessageW(L"MoonlightStreamMenuMainWindow");
+    return message;
+}
+
+static UINT resetWindowMessage()
+{
+    static UINT message = RegisterWindowMessageW(L"MoonlightStreamMenuResetWindow");
+    return message;
+}
+#endif
 
 void Session::stopCompanionScreens()
 {
-    for (QProcess* process : std::as_const(m_CompanionProcesses)) {
-        askCompanionToClose(process);
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        askCompanionToClose(companion.pid);
     }
-    for (QProcess* process : std::as_const(m_CompanionProcesses)) {
-        finishCompanion(process);
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        finishCompanion(companion.pid);
     }
-    m_CompanionProcesses.clear();
+    m_Companions.clear();
+}
+
+// Only the main screen reconnects: its extra screens' windows keep streaming, and the next main
+// window (a new process) takes them over
+void Session::handOverCompanions()
+{
+    QStringList list;
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        if (companion.pid != 0) {
+            list << QString("%1:%2").arg(companion.screen).arg(companion.pid);
+        }
+    }
+    QSettings settings;
+    settings.setValue("companions/handover", list.join(','));
+    settings.setValue("companions/handovertime", QDateTime::currentMSecsSinceEpoch());
+    m_Companions.clear();
+}
+
+void Session::takeOverCompanions(int count)
+{
+    // Windows the previous main window left us, just now (a stale list could name reused ids)
+    QSettings settings;
+    QStringList list = settings.value("companions/handover").toString().split(',', Qt::SkipEmptyParts);
+    qint64 time = settings.value("companions/handovertime", 0).toLongLong();
+    settings.remove("companions/handover");
+    settings.remove("companions/handovertime");
+    QList<Companion> left;
+    if (QDateTime::currentMSecsSinceEpoch() - time < 60000) {
+        for (const QString& entry : list) {
+            QStringList parts = entry.split(':');
+            if (parts.size() == 2 && isRunningCompanion(parts[1].toLongLong())) {
+                left.append({ parts[0].toInt(), parts[1].toLongLong() });
+            }
+        }
+    }
+
+    for (int screen = 2; screen <= count + 1; screen++) {
+        auto it = std::find_if(left.begin(), left.end(), [screen](const Companion& c) { return c.screen == screen; });
+        if (it != left.end()) {
+#ifdef Q_OS_WIN32
+            postToCompanion(it->pid, mainWindowMessage(), (WPARAM)m_WindowHandle);
+#endif
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Took over the window for screen %d", screen);
+            m_Companions.append(*it);
+            left.erase(it);
+        }
+        else {
+            m_Companions.append({ screen, startCompanionScreen(screen) });
+        }
+    }
+
+    // Any beyond the screen count
+    for (const Companion& companion : std::as_const(left)) {
+        askCompanionToClose(companion.pid);
+    }
+    for (const Companion& companion : std::as_const(left)) {
+        finishCompanion(companion.pid);
+    }
+}
+
+void Session::restartCompanion(int screen)
+{
+    for (Companion& companion : m_Companions) {
+        if (companion.screen == screen) {
+            askCompanionToClose(companion.pid);
+            finishCompanion(companion.pid);
+            companion.pid = startCompanionScreen(screen);
+            return;
+        }
+    }
+}
+
+void Session::setScreenResolution(int screen, int width, int height)
+{
+    QSettings settings;
+    if (screen >= 2) {
+        // That extra screen's window only: it starts again at its own resolution
+        settings.setValue(QString("screens/%1/width").arg(screen), width);
+        settings.setValue(QString("screens/%1/height").arg(screen), height);
+        restartCompanion(screen);
+        return;
+    }
+
+    // Screen 1: the extra screens keep the resolution they have (their own, or the shared one
+    // they started with), and only this window reconnects
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        QString key = QString("screens/%1/width").arg(companion.screen);
+        if (!settings.contains(key)) {
+            settings.setValue(key, m_StreamConfig.width);
+            settings.setValue(QString("screens/%1/height").arg(companion.screen), m_StreamConfig.height);
+        }
+    }
+    reconnectWithResolution(width, height);
+}
+
+// ---- where each screen's window goes ----
+
+static QString placementKey(int screen, const char* name)
+{
+    return QString("windows/screen%1/%2").arg(screen).arg(name);
+}
+
+void Session::saveWindowPlacement()
+{
+    if (m_Window == nullptr) {
+        return;
+    }
+    Uint32 flags = SDL_GetWindowFlags(m_Window);
+    int display = SDL_GetWindowDisplayIndex(m_Window);
+    SDL_Rect bounds;
+    if (display < 0 || SDL_GetDisplayBounds(display, &bounds) != 0) {
+        return;
+    }
+    bool fullScreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+    bool maximized = (flags & SDL_WINDOW_MAXIMIZED) != 0;
+    QSettings settings;
+    int screen = screenNumber();
+    settings.setValue(placementKey(screen, "display"), QRect(bounds.x, bounds.y, bounds.w, bounds.h));
+    settings.setValue(placementKey(screen, "fullscreen"), fullScreen);
+    settings.setValue(placementKey(screen, "mode"), (int)m_Preferences->windowMode);
+    settings.setValue(placementKey(screen, "maximized"), maximized);
+    if (!fullScreen && !maximized && !(flags & SDL_WINDOW_MINIMIZED)) {
+        int x, y, w, h;
+        SDL_GetWindowPosition(m_Window, &x, &y);
+        SDL_GetWindowSize(m_Window, &w, &h);
+        settings.setValue(placementKey(screen, "rect"), QRect(x, y, w, h));
+    }
+}
+
+void Session::restoreWindowPlacement(int& x, int& y, int& width, int& height, Uint32& flags)
+{
+    QSettings settings;
+    int screen = screenNumber();
+    if (!settings.contains(placementKey(screen, "display"))) {
+        return;
+    }
+
+    // That monitor, if it's still there
+    QRect saved = settings.value(placementKey(screen, "display")).toRect();
+    int display = -1;
+    SDL_Rect bounds = {};
+    for (int i = 0; i < SDL_GetNumVideoDisplays(); i++) {
+        if (SDL_GetDisplayBounds(i, &bounds) == 0 && bounds.x == saved.x() && bounds.y == saved.y() &&
+                bounds.w == saved.width() && bounds.h == saved.height()) {
+            display = i;
+            break;
+        }
+    }
+    if (display < 0) {
+        return;
+    }
+
+    // The window's own place when it's well inside that monitor, else centered on it
+    QRect rect = settings.value(placementKey(screen, "rect")).toRect();
+    QRect visible = rect.intersected(QRect(bounds.x, bounds.y, bounds.w, bounds.h));
+    if (rect.isValid() && visible.width() >= 200 && visible.height() >= 120) {
+        x = rect.x();
+        y = rect.y();
+        width = rect.width();
+        height = rect.height();
+    }
+    else {
+        x = y = SDL_WINDOWPOS_CENTERED_DISPLAY(display);
+    }
+    if (settings.value(placementKey(screen, "maximized"), false).toBool()) {
+        flags |= SDL_WINDOW_MAXIMIZED;
+    }
+    // Fullscreen as it was, unless the display mode was changed in the settings since
+    if (settings.value(placementKey(screen, "mode"), -1).toInt() == (int)m_Preferences->windowMode) {
+        m_IsFullScreen = settings.value(placementKey(screen, "fullscreen"), m_IsFullScreen).toBool();
+    }
+}
+
+void Session::resetWindowPlacements()
+{
+    QSettings().remove("windows");
+    resetOwnWindowPlacement();
+#ifdef Q_OS_WIN32
+    for (const Companion& companion : std::as_const(m_Companions)) {
+        postToCompanion(companion.pid, resetWindowMessage(), 0);
+    }
+#endif
+}
+
+void Session::resetOwnWindowPlacement()
+{
+    if (m_Window == nullptr) {
+        return;
+    }
+    if (SDL_GetWindowFlags(m_Window) & SDL_WINDOW_FULLSCREEN) {
+        toggleFullscreen();
+    }
+    SDL_RestoreWindow(m_Window);
+
+    // On the main monitor, the screens' windows a little apart
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(0, &usable) != 0) {
+        return;
+    }
+    SDL_Rect src = { 0, 0, m_StreamConfig.width, m_StreamConfig.height };
+    SDL_Rect dst = { 0, 0, (int)(usable.w * 0.7f) & ~0x1, (int)(usable.h * 0.7f) & ~0x1 };
+    if (src.w > dst.w || src.h > dst.h) {
+        StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+    }
+    else {
+        dst = src;
+    }
+    int step = 48 * (screenNumber() - 1);
+    SDL_SetWindowSize(m_Window, dst.w, dst.h);
+    SDL_SetWindowPosition(m_Window, usable.x + (usable.w - dst.w) / 2 - 48 + step, usable.y + (usable.h - dst.h) / 2 - 48 + step);
+}
+
+void Session::openStreamMenu()
+{
+    streamMenuOpen(m_StreamMenu);
+}
+
+bool Session::forwardToMainWindow(char letter)
+{
+    return streamMenuForwardShortcut(m_StreamMenu, letter);
 }

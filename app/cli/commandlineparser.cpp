@@ -394,7 +394,7 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         m_CompanionHttpsPort = parser.value("companion-https-port").toUShort();
         m_CompanionParentWindow = parser.value("companion-parent-window").toULongLong();
 
-        preferences->applyCompanionOverrides();
+        preferences->applyCompanionOverrides(m_CompanionScreen);
     }
 
     // Resolve display's width and height
