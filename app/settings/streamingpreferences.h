@@ -26,6 +26,15 @@ public:
     Q_INVOKABLE void setShortcutBinding(const QString& id, const QString& binding);
     Q_INVOKABLE void resetShortcuts();
 
+    // Every setting back to its default (the paired hosts stay)
+    Q_INVOKABLE void resetAllToDefaults();
+
+    // Resolution, frame rate, bitrate and V-Sync are per screen: screen 1 (the main window) uses
+    // the usual ones, screens 2 and 3 their own when set (from their stream menu or here). The
+    // settings page edits one screen at a time: these fields then hold that screen's values.
+    int editedScreen() const { return m_EditedScreen; }
+    void setEditedScreen(int screen);
+
     void reload();
 
     enum AudioConfig
@@ -166,6 +175,7 @@ public:
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(int extraScreens MEMBER extraScreens NOTIFY extraScreensChanged)
+    Q_PROPERTY(int editedScreen READ editedScreen WRITE setEditedScreen NOTIFY editedScreenChanged)
     Q_PROPERTY(bool extraScreensHalfBitrate MEMBER extraScreensHalfBitrate NOTIFY extraScreensHalfBitrateChanged)
     Q_PROPERTY(bool immersiveMode MEMBER immersiveMode NOTIFY immersiveModeChanged)
     Q_PROPERTY(int penInputMode MEMBER penInputMode NOTIFY penInputModeChanged)
@@ -261,6 +271,7 @@ signals:
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void extraScreensChanged();
+    void editedScreenChanged();
     void extraScreensHalfBitrateChanged();
     void immersiveModeChanged();
     void penInputModeChanged();
@@ -279,6 +290,13 @@ private:
 
     bool m_LoadedExtraScreensHalfBitrate = false;
     bool m_LoadedPrintScreenToHost = true;
+    int m_EditedScreen = 1;
+    struct ScreenValues {
+        int width = 0, height = 0, fps = 0, bitrateKbps = 0;
+        bool vsync = true;
+    };
+    ScreenValues m_Screen1;       // screen 1's values while another screen is edited
+    ScreenValues m_ShownValues;   // the edited screen's values as loaded (saved only if changed)
     bool m_LoadedRememberWindows = true;
     bool m_Companion = false;
     WindowMode m_SavedWindowMode = WM_WINDOWED;

@@ -28,11 +28,10 @@ const struct {
     { SdlInputHandler::KeyComboUngrabInput,             "release",            'Z', true },
     { SdlInputHandler::KeyComboToggleFullScreen,        "fullscreen_toggle",  'X', true },
     { SdlInputHandler::KeyComboToggleStatsOverlay,      "metrics",            'S', false },
-    { SdlInputHandler::KeyComboToggleMouseMode,         "immersive",          'M', false },
+    { SdlInputHandler::KeyComboTogglePointerRegionLock, "immersive",          'M', false },
     { SdlInputHandler::KeyComboToggleCursorHide,        "cursor",             'C', false },
     { SdlInputHandler::KeyComboToggleMinimize,          "minimize",           'D', true },
     { SdlInputHandler::KeyComboPasteText,               "paste",              'V', false },
-    { SdlInputHandler::KeyComboTogglePointerRegionLock, "lock_cursor",        'L', false },
     { SdlInputHandler::KeyComboQuitAndExit,             "quit_exit",          'E', false },
     { SdlInputHandler::KeyComboToggleKeyboardGrab,      "keyboard_immersive", 'K', true },
     { SdlInputHandler::KeyComboToggleStreamMenu,        "menu_button",        'B', false },
@@ -275,16 +274,10 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
     }
 
     case KeyComboTogglePointerRegionLock:
+        // Immersive mode: the mouse locked in the window (and remembered)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "Detected pointer region lock toggle combo");
-        m_PointerRegionLockActive = !m_PointerRegionLockActive;
-
-        // Remember that the user changed this manually, so we don't mess with it anymore
-        // during windowed <-> full-screen transitions.
-        m_PointerRegionLockToggledByUser = true;
-
-        // Apply the new region lock
-        updatePointerRegionLock();
+                    "Detected immersive mode (pointer region lock) toggle combo");
+        Session::get()->toggleImmersive();
         break;
 
     case KeyComboQuitAndExit:

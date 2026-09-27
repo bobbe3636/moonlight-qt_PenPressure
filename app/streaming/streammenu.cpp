@@ -21,6 +21,7 @@
 #include <commctrl.h>
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -40,7 +41,6 @@ enum Command {
     CmdImmersive,
     CmdReleaseInput,
     CmdCursor,
-    CmdLockCursor,
     CmdSystemKeys,
     CmdPaste,
     CmdCtrlAltDel,
@@ -48,11 +48,14 @@ enum Command {
     CmdHalfBitrate,
     CmdPrintScreen,
     CmdRememberWindows,
+    CmdVsync,
     CmdResetWindows,
     CmdScreens1 = 100,      // 100..102 = 1..3 screens
     CmdResolution = 200,    // 200 + index into the resolution list
     CmdShortcutsReset = 299,
     CmdShortcut = 300,      // 300 + index into Shortcuts::actions()
+    CmdFrameRate = 400,     // 400 + index into frameRates()
+    CmdBitrate = 450,       // 450 + index into k_BitratesMbps
 };
 
 constexpr UINT_PTR k_ParentSubclassId = 0x4D4C534D; // 'MLSM'
@@ -93,7 +96,12 @@ constexpr const wchar_t* Disconnect = L"";
 constexpr const wchar_t* Power = L"";
 constexpr const wchar_t* Check = L"";
 constexpr const wchar_t* Chevron = L"";
+constexpr const wchar_t* FrameRate = L"\uE714";
+constexpr const wchar_t* Bitrate = L"\uE9D2";
+constexpr const wchar_t* Vsync = L"\uE8AB";
 }
+
+constexpr int k_BitratesMbps[] = { 10, 15, 20, 30, 40, 50, 60, 80, 100, 150 };
 
 // Dark menus on Windows 10 1903+ (undocumented uxtheme ordinals, the same ones Explorer uses)
 void enableDarkMenus()
@@ -379,13 +387,28 @@ private:
             list.push_back({ mode.w, mode.h, QString("This monitor (%1 x %2)").arg(mode.w).arg(mode.h) });
         }
         const Resolution common[] = {
-            { 1280, 720, "1280 x 720" }, { 1920, 1080, "1920 x 1080" },
-            { 2560, 1440, "2560 x 1440" }, { 3840, 2160, "3840 x 2160" },
+            { 1280, 720, "1280 x 720" }, { 1920, 1080, "1920 x 1080" }, { 1920, 1200, "1920 x 1200 (16:10)" },
+            { 2560, 1080, "2560 x 1080 (21:9)" }, { 2560, 1440, "2560 x 1440" }, { 2560, 1600, "2560 x 1600 (16:10)" },
+            { 3440, 1440, "3440 x 1440 (21:9)" }, { 3840, 1600, "3840 x 1600 (21:9)" }, { 5120, 1440, "5120 x 1440 (32:9)" },
+            { 3840, 2160, "3840 x 2160" }, { 5120, 2160, "5120 x 2160 (21:9)" },
         };
         for (const auto& r : common) {
             if (list.empty() || r.w != list[0].w || r.h != list[0].h) {
                 list.push_back(r);
             }
+        }
+        return list;
+    }
+
+    std::vector<int> frameRates()
+    {
+        std::vector<int> list = { 30, 60, 90, 120, 144, 165, 240 };
+        SDL_DisplayMode mode;
+        int display = SDL_GetWindowDisplayIndex(m_Window);
+        if (display >= 0 && SDL_GetCurrentDisplayMode(display, &mode) == 0 && mode.refresh_rate > 0 &&
+                std::find(list.begin(), list.end(), mode.refresh_rate) == list.end()) {
+            list.push_back(mode.refresh_rate);
+            std::sort(list.begin(), list.end());
         }
         return list;
     }
@@ -662,15 +685,35 @@ private:
         info(resolutionMenu, "Changing it reconnects this screen (a few seconds)");
         submenu(menu, resolutionMenu, Glyph::Resolution, "Resolution",
                 QString("%1 x %2").arg(m_Session->streamWidth()).arg(m_Session->streamHeight()));
+
+        HMENU fpsMenu = CreatePopupMenu();
+        auto fpsList = frameRates();
+        for (size_t i = 0; i < fpsList.size(); i++) {
+            add(fpsMenu, CmdFrameRate + (UINT)i, nullptr, QString("%1 FPS").arg(fpsList[i]), QString(),
+                fpsList[i] == m_Session->streamFps());
+        }
+        separator(fpsMenu);
+        info(fpsMenu, "Changing it reconnects this screen");
+        submenu(menu, fpsMenu, Glyph::FrameRate, "Frame rate", QString("%1 FPS").arg(m_Session->streamFps()));
+
+        HMENU bitrateMenu = CreatePopupMenu();
+        for (size_t i = 0; i < std::size(k_BitratesMbps); i++) {
+            add(bitrateMenu, CmdBitrate + (UINT)i, nullptr, QString("%1 Mbps").arg(k_BitratesMbps[i]), QString(),
+                k_BitratesMbps[i] * 1000 == m_Session->streamBitrateKbps());
+        }
+        separator(bitrateMenu);
+        info(bitrateMenu, "Changing it reconnects this screen");
+        submenu(menu, bitrateMenu, Glyph::Bitrate, "Bitrate",
+                QString("%1 Mbps").arg(m_Session->streamBitrateKbps() / 1000.0));
+        add(menu, CmdVsync, Glyph::Vsync, "V-Sync (reconnects this screen)", QString(), m_Session->isVsyncEnabled());
         separator(menu);
 
-        add(menu, CmdImmersive, Glyph::Mouse, "Immersive mode (capture mouse)", keyOf("immersive"), m_Session->isImmersive());
+        add(menu, CmdImmersive, Glyph::Mouse, "Immersive mode (mouse stays in the window)", keyOf("immersive"), m_Session->isImmersive());
         add(menu, CmdSystemKeys, Glyph::Keyboard, "Keyboard immersive (Alt+Tab, Win key)", keyOf("keyboard_immersive"),
             m_Session->isKeyboardImmersive());
         add(menu, CmdPrintScreen, Glyph::Camera, "Print Screen goes to the host", QString(), Session::isPrintScreenToHost());
         add(menu, CmdReleaseInput, Glyph::KeyboardMouse, "Release mouse and keyboard", keyOf("release"));
         add(menu, CmdCursor, Glyph::Cursor, "Show local cursor", keyOf("cursor"), m_Session->isLocalCursorVisible());
-        add(menu, CmdLockCursor, Glyph::Lock, "Lock cursor to window", keyOf("lock_cursor"), m_Session->isCursorLocked());
         add(menu, CmdPaste, Glyph::Paste, "Paste clipboard as text", keyOf("paste"));
         add(menu, CmdCtrlAltDel, Glyph::Shield, "Send Ctrl+Alt+Del", keyOf("ctrl_alt_del"));
 
@@ -752,6 +795,15 @@ private:
         case CmdResetWindows:
             m_Session->resetWindowPlacements();
             break;
+        case CmdFrameRate:
+            m_Session->setScreenValue(screen < 2 ? 1 : screen, "fps", (int)lParam);
+            break;
+        case CmdBitrate:
+            m_Session->setScreenValue(screen < 2 ? 1 : screen, "bitrate", (int)lParam);
+            break;
+        case CmdVsync:
+            m_Session->setScreenValue(screen < 2 ? 1 : screen, "vsync", (int)lParam);
+            break;
         default:
             if (cmd >= CmdScreens1 && cmd < CmdScreens1 + 3) {
                 m_Session->setExtraScreenCount((int)(cmd - CmdScreens1));
@@ -782,6 +834,25 @@ private:
             }
             return;
         }
+        auto fpsList = frameRates();
+        if (cmd >= CmdFrameRate && cmd < CmdFrameRate + fpsList.size()) {
+            int value = fpsList[cmd - CmdFrameRate];
+            if (value != m_Session->streamFps()) {
+                runStreamWide(CmdFrameRate, value, m_Session->screenNumber());
+            }
+            return;
+        }
+        if (cmd >= CmdBitrate && cmd < CmdBitrate + std::size(k_BitratesMbps)) {
+            int value = k_BitratesMbps[cmd - CmdBitrate] * 1000;
+            if (value != m_Session->streamBitrateKbps()) {
+                runStreamWide(CmdBitrate, value, m_Session->screenNumber());
+            }
+            return;
+        }
+        if (cmd == CmdVsync) {
+            runStreamWide(CmdVsync, m_Session->isVsyncEnabled() ? 0 : 1, m_Session->screenNumber());
+            return;
+        }
         if (isStreamWide(cmd)) {
             runStreamWide(cmd, 0, m_Session->screenNumber());
             return;
@@ -795,7 +866,6 @@ private:
         case CmdImmersive:      m_Session->toggleImmersive(); break;
         case CmdReleaseInput:   m_Session->runShortcutCommand('Z'); break;
         case CmdCursor:         m_Session->runShortcutCommand('C'); break;
-        case CmdLockCursor:     m_Session->runShortcutCommand('L'); break;
         case CmdSystemKeys:     m_Session->toggleKeyboardImmersive(); break;
         case CmdPaste:          m_Session->runShortcutCommand('V'); break;
         case CmdCtrlAltDel:     m_Session->sendCtrlAltDel(); break;
