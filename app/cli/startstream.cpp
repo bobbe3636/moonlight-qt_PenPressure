@@ -232,6 +232,7 @@ public:
         NvApp app = m_Computer->appList[index];
         Session* session = new Session(m_Computer, app, m_Preferences);
         session->setCompanion(true);
+        session->setCompanionScreen(m_CompanionScreen);
         session->setCompanionParentWindow(m_CompanionParentWindow);
         emit q->sessionCreated(app.name, session);
     }

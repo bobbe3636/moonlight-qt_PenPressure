@@ -129,7 +129,7 @@ public:
     // Extra host screens (Apollo "Extra screens"): one companion Moonlight window per screen
     void startCompanionScreens();
 
-    void startCompanionScreen(int screen);
+    qint64 startCompanionScreen(int screen);  // its process id, 0 if it didn't start
 
     void stopCompanionScreens();
 
@@ -160,6 +160,21 @@ public:
     void reconnectWithResolution(int width, int height);
     void sendCtrlAltDel();
 
+    // Which screen this window streams: 1 = the main window, 2/3 = an extra screen's window
+    int screenNumber() const { return m_IsCompanion ? m_CompanionScreen : 1; }
+    void setCompanionScreen(int screen) { m_CompanionScreen = screen; }
+
+    // A new resolution for one screen (main window): only that screen's window reconnects
+    void setScreenResolution(int screen, int width, int height);
+
+    // Every stream window back to a default place, out of fullscreen (main window); this one
+    void resetWindowPlacements();
+    void resetOwnWindowPlacement();
+
+    // The menu's shortcut; an extra screen's disconnect / quit shortcuts act on every screen
+    void openStreamMenu();
+    bool forwardToMainWindow(char letter);
+
     // Print Screen in this stream window goes to the host (not this PC's screenshot tool);
     // shared by every screen's window
     static bool isPrintScreenToHost();
@@ -185,6 +200,14 @@ private:
     bool m_IsCompanion = false;
     quintptr m_CompanionParentWindow = 0;
     QStringList m_RelaunchArgs;
+    int m_CompanionScreen = 0;
+    bool m_HandOverCompanions = false;      // a main-only reconnect: the new main window takes the extra screens' windows over
+    bool m_QuitAppBeforeRelaunch = false;   // ...and the host builds this screen's display anew
+    void handOverCompanions();
+    void takeOverCompanions(int count);
+    void restartCompanion(int screen);
+    void saveWindowPlacement();
+    void restoreWindowPlacement(int& x, int& y, int& width, int& height, Uint32& flags);
 
 signals:
     void stageStarting(QString stage);
@@ -312,7 +335,13 @@ private:
     AUDIO_RENDERER_CALLBACKS m_AudioCallbacks;
     NvComputer* m_Computer;
     NvApp m_App;
-    QList<QProcess*> m_CompanionProcesses;
+    // The extra screens' windows: their screen and process (started detached, so that a new
+    // main window can take them over when only the main screen reconnects)
+    struct Companion {
+        int screen;
+        qint64 pid;
+    };
+    QList<Companion> m_Companions;
     SDL_Window* m_Window;
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
