@@ -1529,7 +1529,7 @@ Flickable {
                     ToolTip.delay: 1000
                     ToolTip.timeout: 8000
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("How Moonlight reads your pen. Automatic and Windows Ink: Windows Ink, which works with every pen, plus the tablet's raw data where Moonlight knows it (a Cintiq 22's full 8192 pressure levels). Wintab (experimental): the tablet driver's Wintab for its full pressure range; it may not recognize the pen yet. Applies from the next stream.")
+                    ToolTip.text: qsTr("How Moonlight reads your pen. Automatic and Windows Ink: Windows Ink, which works with every pen, plus the tablet's own reports where Windows lets Moonlight read them (Wacom, Huion, XP-Pen and other standard pen tablets): its full pressure range and both side buttons. Wintab (experimental): the tablet driver's Wintab for its full pressure range; it may not recognize the pen yet. Applies from the next stream.")
                 }
 
                 CheckBox {

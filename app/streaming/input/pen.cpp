@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <map>
 #include <thread>
 #include <vector>
 
@@ -164,6 +165,209 @@ struct WacomRawReader
             thread.join();
         }
         CloseHandle(handle);
+    }
+};
+
+// Any tablet's own reports (Wacom, Huion, XP-Pen, other standard HID pens), through Raw Input.
+//
+// Windows keeps a HID pen's collection to itself (another reader gets a sharing violation) but
+// hands copies of its reports to Raw Input. Each report is decoded with the device's own report
+// descriptor (its preparsed data), so no model needs to be known: the pressure over the tablet's
+// full range (0..its logical maximum, e.g. 8191 or 16383, where Windows Ink stops at 1024) and
+// the barrel buttons, hovering too. Wacom's driver delivers them on its Digitizer collection
+// (usage 0x01), other tablets on their Pen collection (0x02). A hidden window on its own thread
+// receives them in the background too: every screen's window needs the latest state, focused or
+// not. Position, tilt, eraser and timing still come from WM_POINTER.
+
+struct HidPenReader
+{
+    std::thread thread;
+    HANDLE ready = nullptr;
+    std::atomic<DWORD> threadId { 0 };
+    std::atomic<float> pressure { 0.0f };  // 0..1 of the tablet's range
+    std::atomic<uint8_t> buttons { 0 };
+    std::atomic<bool> hasBarrel { false };  // the tablet reports its barrel buttons
+    std::atomic<bool> seenBarrel2 { false };  // ...the second one too (Wacom's driver turns it into a click)
+    std::atomic<uint64_t> lastReportMs { 0 };
+    std::atomic<bool> seenReport { false };
+
+    static constexpr uint8_t k_Barrel1 = 0x01;
+    static constexpr uint8_t k_Barrel2 = 0x02;
+
+    struct Device
+    {
+        std::vector<uint8_t> preparsed;
+        LONG pressureMax = 0;
+        bool hasBarrel = false;
+    };
+    std::map<HANDLE, Device> devices;  // reader thread only
+
+    // Only trust state that is current
+    bool fresh() const
+    {
+        return seenReport && GetTickCount64() - lastReportMs < 100;
+    }
+
+    Device& device(HANDLE h)
+    {
+        auto known = devices.find(h);
+        if (known != devices.end()) {
+            return known->second;
+        }
+        Device& d = devices[h];
+        UINT size = 0;
+        if (GetRawInputDeviceInfoW(h, RIDI_PREPARSEDDATA, nullptr, &size) == 0 && size > 0) {
+            d.preparsed.resize(size);
+            if (GetRawInputDeviceInfoW(h, RIDI_PREPARSEDDATA, d.preparsed.data(), &size) == (UINT)-1) {
+                d.preparsed.clear();
+            }
+        }
+        if (!d.preparsed.empty()) {
+            auto ppd = (PHIDP_PREPARSED_DATA)d.preparsed.data();
+            HIDP_VALUE_CAPS values[8];
+            USHORT count = 8;
+            if (HidP_GetSpecificValueCaps(HidP_Input, 0x0D, 0, 0x30, values, &count, ppd) == HIDP_STATUS_SUCCESS) {
+                for (USHORT i = 0; i < count; i++) {
+                    LONG max = values[i].LogicalMax;
+                    if (max <= values[i].LogicalMin && values[i].BitSize < 32) {
+                        max = (LONG)((1UL << values[i].BitSize) - 1);  // an unsigned maximum read as negative
+                    }
+                    d.pressureMax = qMax(d.pressureMax, max);
+                }
+            }
+            HIDP_BUTTON_CAPS barrels[8];
+            count = 8;
+            d.hasBarrel = HidP_GetSpecificButtonCaps(HidP_Input, 0x0D, 0, 0x44, barrels, &count, ppd) == HIDP_STATUS_SUCCESS &&
+                          count > 0;
+        }
+        return d;
+    }
+
+    void handle(HANDLE h, BYTE* report, DWORD size)
+    {
+        Device& d = device(h);
+        if (d.preparsed.empty() || d.pressureMax <= 0) {
+            return;
+        }
+        auto ppd = (PHIDP_PREPARSED_DATA)d.preparsed.data();
+        ULONG value = 0;
+        if (HidP_GetUsageValue(HidP_Input, 0x0D, 0, 0x30, &value, ppd, (PCHAR)report, size) != HIDP_STATUS_SUCCESS) {
+            return;  // another of the device's reports
+        }
+        uint8_t pressed = 0;
+        USAGE usages[16];
+        ULONG count = 16;
+        if (HidP_GetUsages(HidP_Input, 0x0D, 0, usages, &count, ppd, (PCHAR)report, size) == HIDP_STATUS_SUCCESS) {
+            for (ULONG i = 0; i < count; i++) {
+                if (usages[i] == 0x44) {
+                    pressed |= k_Barrel1;  // Barrel Switch
+                }
+                else if (usages[i] == 0x5A || usages[i] == 0x43) {
+                    pressed |= k_Barrel2;  // Secondary Barrel Switch (Huion: Secondary Tip Switch)
+                }
+            }
+        }
+        pressure = qMin((float)value / d.pressureMax, 1.0f);
+        buttons = pressed;
+        if (pressed & k_Barrel2) {
+            seenBarrel2 = true;
+        }
+        hasBarrel = d.hasBarrel;
+        lastReportMs = GetTickCount64();
+        if (!seenReport) {
+            seenReport = true;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using the tablet's own reports (Raw Input): pressure 0..%ld%s",
+                        d.pressureMax, d.hasBarrel ? ", barrel buttons" : "");
+        }
+    }
+
+    static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    {
+        if (msg == WM_INPUT) {
+            auto self = (HidPenReader*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+            UINT size = 0;
+            GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+            static thread_local std::vector<uint8_t> buf;
+            buf.resize(size);
+            if (self != nullptr && size > 0 &&
+                    GetRawInputData((HRAWINPUT)lParam, RID_INPUT, buf.data(), &size, sizeof(RAWINPUTHEADER)) == size) {
+                auto input = (RAWINPUT*)buf.data();
+                if (input->header.dwType == RIM_TYPEHID) {
+                    for (DWORD i = 0; i < input->data.hid.dwCount; i++) {
+                        self->handle(input->header.hDevice, input->data.hid.bRawData + i * input->data.hid.dwSizeHid,
+                                     input->data.hid.dwSizeHid);
+                    }
+                }
+            }
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    void run()
+    {
+        // A message queue first, so the quit message can't be lost
+        MSG msg;
+        PeekMessageW(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
+        threadId = GetCurrentThreadId();
+
+        HINSTANCE instance = GetModuleHandleW(nullptr);
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = windowProc;
+        wc.hInstance = instance;
+        wc.lpszClassName = L"MoonlightRawPen";
+        RegisterClassW(&wc);
+        HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
+        bool registered = false;
+        RAWINPUTDEVICE rid[2] = {};
+        if (hwnd != nullptr) {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)this);
+            rid[0] = { 0x0D, 0x02, RIDEV_INPUTSINK, hwnd };  // Pen
+            rid[1] = { 0x0D, 0x01, RIDEV_INPUTSINK, hwnd };  // Digitizer (Wacom's driver)
+            registered = RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
+            if (!registered) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Raw Input for pen tablets unavailable: %lu", GetLastError());
+            }
+        }
+        SetEvent(ready);
+
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        if (registered) {
+            for (auto& r : rid) {
+                r.dwFlags = RIDEV_REMOVE;
+                r.hwndTarget = nullptr;
+            }
+            RegisterRawInputDevices(rid, 2, sizeof(RAWINPUTDEVICE));
+        }
+        if (hwnd != nullptr) {
+            DestroyWindow(hwnd);
+        }
+    }
+
+    static HidPenReader* open()
+    {
+        auto reader = new HidPenReader();
+        reader->ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        reader->thread = std::thread(&HidPenReader::run, reader);
+        WaitForSingleObject(reader->ready, 2000);
+        return reader;
+    }
+
+    ~HidPenReader()
+    {
+        if (thread.joinable()) {
+            while (threadId == 0) {
+                Sleep(1);
+            }
+            PostThreadMessageW(threadId, WM_QUIT, 0, 0);
+            thread.join();
+        }
+        if (ready != nullptr) {
+            CloseHandle(ready);
+        }
     }
 };
 
@@ -463,6 +667,7 @@ void SdlInputHandler::installNativePenHook()
         }
         if (m_Wintab == nullptr) {
             m_WacomRaw = WacomRawReader::open();
+            m_HidPen = HidPenReader::open();
         }
     }
     else {
@@ -483,6 +688,8 @@ void SdlInputHandler::removeNativePenHook()
 
     delete (WacomRawReader*)m_WacomRaw;
     m_WacomRaw = nullptr;
+    delete (HidPenReader*)m_HidPen;
+    m_HidPen = nullptr;
     delete (WintabPen*)m_Wintab;
     m_Wintab = nullptr;
 }
@@ -635,6 +842,20 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
                 pressureOrDistance = qMin(rawDistance / WacomRawReader::k_MaxDistance, 1.0f);
             }
         }
+        // Any other tablet's own reports: its full pressure range, and its barrel buttons
+        else if (auto hidPen = (HidPenReader*)m_HidPen; hidPen != nullptr && hidPen->fresh()) {
+            if (hidPen->hasBarrel) {
+                uint8_t pressed = hidPen->buttons;
+                penButtons = ((pressed & HidPenReader::k_Barrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
+                             ((pressed & HidPenReader::k_Barrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
+            }
+            if (flags & POINTER_FLAG_INCONTACT) {
+                float hidPressure = hidPen->pressure;
+                if (hidPressure > 0.0f) {
+                    pressureOrDistance = hidPressure;
+                }
+            }
+        }
 
         // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth
         uint16_t rotation = LI_ROT_UNKNOWN;
@@ -676,6 +897,12 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     // driver's synthesized click so the host doesn't get the press twice
     auto raw = (WacomRawReader*)m_WacomRaw;
     if (raw != nullptr && raw->fresh()) {
+        return true;
+    }
+    // Likewise once the tablet's own reports have shown the second barrel button (a driver that
+    // turns it into a click instead, like Wacom's, never reports it: its click stays)
+    auto hidPen = (HidPenReader*)m_HidPen;
+    if (hidPen != nullptr && hidPen->fresh() && hidPen->seenBarrel2) {
         return true;
     }
 
