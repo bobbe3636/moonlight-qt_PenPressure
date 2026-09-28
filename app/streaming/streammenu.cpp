@@ -655,8 +655,9 @@ private:
 
         add(menu, CmdHideButton, canShowButton() ? Glyph::Hide : Glyph::Show,
             canShowButton() ? "Hide button" : "Show the menu button", keyOf("menu_button"));
-        add(menu, CmdFullScreen, fullScreen ? Glyph::BackToWindow : Glyph::FullScreen, "Fullscreen",
-            keyOf("fullscreen_toggle"), fullScreen);
+        // Says what it does: a window as big as the monitor looks fullscreen too
+        add(menu, CmdFullScreen, fullScreen ? Glyph::BackToWindow : Glyph::FullScreen,
+            fullScreen ? "Switch to windowed" : "Switch to fullscreen", keyOf("fullscreen_toggle"));
         add(menu, CmdMinimize, Glyph::Minimize, "Minimize", keyOf("minimize"));
         add(menu, CmdSound, soundOn ? Glyph::Volume : Glyph::Mute, "Sound", QString(), soundOn);
         add(menu, CmdMetrics, Glyph::Metrics, "Metrics", keyOf("metrics"), m_Session->isStatsOverlayVisible());

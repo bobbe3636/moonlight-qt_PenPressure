@@ -1560,7 +1560,18 @@ void Session::toggleFullscreen()
 #endif
 
     // Actually enter/leave fullscreen
+    int oldWidth, oldHeight, newWidth, newHeight;
+    SDL_GetWindowSize(m_Window, &oldWidth, &oldHeight);
     SDL_SetWindowFullscreen(m_Window, fullScreen ? m_FullScreenFlag : 0);
+
+    // The renderer comes back with the window's size change; when the size stays the same (a
+    // window as big as the monitor), there's none: ask for it, else the picture stays frozen
+    SDL_GetWindowSize(m_Window, &newWidth, &newHeight);
+    if (newWidth == oldWidth && newHeight == oldHeight) {
+        SDL_Event event = {};
+        event.type = SDL_RENDER_DEVICE_RESET;
+        SDL_PushEvent(&event);
+    }
 
 #ifdef Q_OS_DARWIN
     // SDL on macOS has a bug that causes the window size to be reset to crazy
@@ -3083,6 +3094,19 @@ void Session::restoreWindowPlacement(int& x, int& y, int& width, int& height, Ui
         y = rect.y();
         width = rect.width();
         height = rect.height();
+
+        // As big as the monitor or more, the window looks fullscreen (and its title bar is off
+        // screen): 90% of the monitor's free area, centered
+        SDL_Rect usable;
+        if (SDL_GetDisplayUsableBounds(display, &usable) == 0 && (width > usable.w - 16 || height > usable.h - 40)) {
+            SDL_Rect src = { 0, 0, width, height };
+            SDL_Rect dst = { 0, 0, (int)(usable.w * 0.9f) & ~0x1, (int)(usable.h * 0.9f) & ~0x1 };
+            StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+            width = dst.w;
+            height = dst.h;
+            x = usable.x + (usable.w - width) / 2;
+            y = usable.y + (usable.h - height) / 2;
+        }
     }
     else {
         x = y = SDL_WINDOWPOS_CENTERED_DISPLAY(display);
