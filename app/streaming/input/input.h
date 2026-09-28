@@ -297,6 +297,7 @@ private:
     void* m_NativePenHwnd;
     void* m_WacomRaw; // raw Wacom report reader (pen.cpp), for barrel buttons and full pressure
     void* m_Wintab; // Wintab pen (pen.cpp): the whole pen from Wintab, full pressure range for any tablet
+    void* m_HidPen; // any tablet's own reports through Raw Input (pen.cpp): full pressure, barrel buttons
     int m_PenInputMode; // StreamingPreferences::penInputMode
     bool m_NativePenLogged;
     float m_LastPenX;

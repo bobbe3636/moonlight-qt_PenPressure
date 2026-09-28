@@ -32,6 +32,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
       m_NativePenHwnd(nullptr),
       m_WacomRaw(nullptr),
       m_Wintab(nullptr),
+      m_HidPen(nullptr),
       m_PenInputMode(prefs.penInputMode),
       m_NativePenLogged(false),
       m_LastPenX(0.5f),
