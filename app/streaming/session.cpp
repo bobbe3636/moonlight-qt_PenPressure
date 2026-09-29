@@ -1849,8 +1849,19 @@ void Session::start()
     if (m_Preferences->extraScreens > 0) {
         m_Preferences->absoluteMouseMode = true;
     }
+    // Gamepads go through screen 1 only. Each screen's window is its own connection, and a
+    // window reads the gamepad only while it has focus: moving to another screen's window made
+    // that one plug in another controller on the host, and the game lost the one it was using.
+    // So screen 1's window reads gamepads in the background too, and the other screens' windows
+    // never open one.
+    bool savedBackgroundGamepad = m_Preferences->backgroundGamepad;
+    if (m_Preferences->extraScreens > 0 && !m_IsCompanion) {
+        m_Preferences->backgroundGamepad = true;
+    }
     m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
     m_Preferences->absoluteMouseMode = savedAbsoluteMouseMode;
+    m_Preferences->backgroundGamepad = savedBackgroundGamepad;
+    m_InputHandler->setGamepadsEnabled(!m_IsCompanion);
 
     // Kick off the async connection thread then return to the caller to pump the event loop
     auto thread = new AsyncConnectionStartThread(this);
