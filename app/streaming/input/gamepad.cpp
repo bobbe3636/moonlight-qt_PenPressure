@@ -493,6 +493,10 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
         char guidStr[33];
         uint32_t hapticCaps;
 
+        if (!m_GamepadsEnabled) {
+            return;  // an extra screen's window: screen 1's window has the gamepads
+        }
+
         controller = SDL_GameControllerOpen(event->which);
         if (controller == NULL) {
             SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -1013,6 +1017,10 @@ int SdlInputHandler::getAttachedGamepadMask()
 {
     int count;
     int mask;
+
+    if (!m_GamepadsEnabled) {
+        return 0;
+    }
 
     if (!m_MultiController) {
         // Player 1 is always present in non-MC mode

@@ -146,6 +146,9 @@ public:
 
     int getAttachedGamepadMask();
 
+    // An extra screen's window leaves gamepads to screen 1's (session.cpp)
+    void setGamepadsEnabled(bool enabled) { m_GamepadsEnabled = enabled; }
+
     void raiseAllKeys();
 
     void notifyMouseLeave();
@@ -251,6 +254,7 @@ private:
 
     SDL_Window* m_Window;
     bool m_MultiController;
+    bool m_GamepadsEnabled = true;
     bool m_GamepadMouse;
     bool m_SwapMouseButtons;
     bool m_ReverseScrollDirection;
