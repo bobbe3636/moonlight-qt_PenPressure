@@ -195,6 +195,16 @@ void Session::clConnectionStatusUpdate(int connectionStatus)
         return;
     }
 
+    // A small badge on the menu button (like Parsec), not text over the picture; the text
+    // only where the button isn't showing
+    if (streamMenuSetConnectionWarning(s_ActiveSession->m_StreamMenu, connectionStatus == CONN_STATUS_POOR)) {
+        if (connectionStatus == CONN_STATUS_OKAY) {
+            // A text warning from while the button was hidden
+            s_ActiveSession->m_OverlayManager.setOverlayState(Overlay::OverlayStatusUpdate, false);
+        }
+        return;
+    }
+
     switch (connectionStatus)
     {
     case CONN_STATUS_POOR:
