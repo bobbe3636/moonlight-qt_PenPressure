@@ -195,6 +195,16 @@ public:
         showMenu(pt.x, pt.y, TPM_LEFTALIGN | TPM_TOPALIGN);
     }
 
+    bool setConnectionWarning(bool poor)
+    {
+        if (m_Button == nullptr) {
+            return false;
+        }
+        // The button belongs to the window's thread; this comes from the network thread
+        PostMessageW(m_Button, k_ConnectionWarningMessage, poor ? 1 : 0, 0);
+        return m_Visible && canShowButton();
+    }
+
     bool forwardShortcut(char letter)
     {
         UINT cmd = letter == 'Q' ? CmdDisconnect : letter == 'E' ? CmdQuitAppAndExit : 0;
@@ -343,6 +353,18 @@ private:
             QSvgRenderer logo(QString(":/res/moonlight.svg"));
             double half = r * (m_Pressed ? 0.56 : 0.62);
             logo.render(&painter, QRectF(c.x() - half, c.y() - half, 2 * half, 2 * half));
+
+            // Slow connection: a small amber badge with "!" on the rim, top right
+            if (m_PoorConnection) {
+                const double br = r * 0.34;
+                const QPointF bc = c + QPointF(r * 0.70, -r * 0.70);
+                painter.setPen(QPen(QColor(20, 20, 24, 230), s * 0.025));
+                painter.setBrush(QColor(255, 176, 32));
+                painter.drawEllipse(bc, br, br);
+                painter.setPen(QPen(QColor(30, 22, 0), br * 0.30, Qt::SolidLine, Qt::RoundCap));
+                painter.drawLine(bc + QPointF(0, -br * 0.48), bc + QPointF(0, br * 0.12));
+                painter.drawPoint(bc + QPointF(0, br * 0.50));
+            }
         }
 
         BITMAPINFO bmi = {};
@@ -646,6 +668,10 @@ private:
         createMenuFonts();
         m_Items.clear();
         HMENU menu = CreatePopupMenu();
+        if (m_PoorConnection) {
+            info(menu, "Slow connection to the PC right now");
+            separator(menu);
+        }
 
         // Check marks show what's on; stream-wide state lives in the main window's session
         QSettings shared;
@@ -925,6 +951,13 @@ private:
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE; // never take focus from the stream
 
+        case k_ConnectionWarningMessage:
+            if (self->m_PoorConnection != (wParam != 0)) {
+                self->m_PoorConnection = wParam != 0;
+                self->render();
+            }
+            return 0;
+
         case WM_LBUTTONDOWN:
             SetCapture(hwnd);
             self->m_Pressed = true;
@@ -1052,6 +1085,8 @@ private:
     bool m_Visible = true;
     bool m_Hover = false;
     bool m_Pressed = false;
+    bool m_PoorConnection = false;  // the warning badge
+    static constexpr UINT k_ConnectionWarningMessage = WM_APP + 0x51;
     bool m_Dragging = false;
     POINT m_PressCursor = {};
     RECT m_PressRect = {};
@@ -1102,6 +1137,11 @@ bool streamMenuForwardShortcut(StreamMenu* menu, char letter)
     return menu != nullptr && menu->forwardShortcut(letter);
 }
 
+bool streamMenuSetConnectionWarning(StreamMenu* menu, bool poor)
+{
+    return menu != nullptr && menu->setConnectionWarning(poor);
+}
+
 #else
 
 StreamMenu* streamMenuCreate(Session*, SDL_Window*) { return nullptr; }
@@ -1109,5 +1149,6 @@ void streamMenuDestroy(StreamMenu*) {}
 void streamMenuToggle(StreamMenu*) {}
 void streamMenuOpen(StreamMenu*) {}
 bool streamMenuForwardShortcut(StreamMenu*, char) { return false; }
+bool streamMenuSetConnectionWarning(StreamMenu*, bool) { return false; }
 
 #endif

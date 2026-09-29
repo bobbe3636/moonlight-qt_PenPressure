@@ -21,3 +21,8 @@ void streamMenuOpen(StreamMenu* menu);
 // An extra screen's window: its disconnect / quit shortcuts act on every screen, as the menu's
 // commands do (the main window runs them). False in the main window.
 bool streamMenuForwardShortcut(StreamMenu* menu, char letter);
+
+// A slow connection: a small warning badge on the button (like Parsec) instead of text over the
+// picture. Any thread. False if the button isn't showing (hidden, exclusive fullscreen): the
+// caller then warns another way.
+bool streamMenuSetConnectionWarning(StreamMenu* menu, bool poor);
