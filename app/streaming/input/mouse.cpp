@@ -31,6 +31,19 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
         return;
     }
 
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+    // Several screens: a drag (a window, a file) can go on into another screen's window, in
+    // immersive mode too, so the pointer is free while a button is held
+    if (m_MultiScreen && m_PointerRegionLockActive && m_AbsoluteMouseMode) {
+        if (event->state == SDL_PRESSED) {
+            SDL_SetWindowMouseRect(m_Window, nullptr);
+        }
+        else if (SDL_GetMouseState(nullptr, nullptr) == 0) {
+            updatePointerRegionLock();
+        }
+    }
+#endif
+
     switch (event->button)
     {
         case SDL_BUTTON_LEFT:
@@ -116,6 +129,13 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
 
         mouseInVideoRegion = isMouseInVideoRegion(x, y, windowWidth, windowHeight);
+
+        // A drag over another screen's window: that window moves the host's cursor onto its
+        // screen (the button stays down; its release still comes here, and drops it there)
+        if (!mouseInVideoRegion && SDL_GetMouseState(nullptr, nullptr) != 0 && forwardPointerToOtherScreen()) {
+            m_MouseWasInVideoRegion = false;
+            return;
+        }
 
         // Clamp motion to the video region
         x = qMin(qMax(x - dst.x, 0), dst.w);

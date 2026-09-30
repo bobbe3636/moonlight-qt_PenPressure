@@ -149,6 +149,13 @@ public:
     // An extra screen's window leaves gamepads to screen 1's (session.cpp)
     void setGamepadsEnabled(bool enabled) { m_GamepadsEnabled = enabled; }
 
+    // Several screens (each its own window): a drag goes on across their windows (mouse.cpp)
+    void setMultiScreen(bool multiScreen) { m_MultiScreen = multiScreen; }
+
+    // Another screen's window hands us the pointer while a drag it started is over us
+    // (screen coordinates): the host's cursor moves onto our screen (pen.cpp, Windows)
+    void handleForeignPointer(int screenX, int screenY);
+
     void raiseAllKeys();
 
     void notifyMouseLeave();
@@ -255,6 +262,10 @@ private:
     SDL_Window* m_Window;
     bool m_MultiController;
     bool m_GamepadsEnabled = true;
+    bool m_MultiScreen = false;
+
+    // A drag started here is over another screen's window: tell that window (pen.cpp, Windows)
+    bool forwardPointerToOtherScreen();
     bool m_GamepadMouse;
     bool m_SwapMouseButtons;
     bool m_ReverseScrollDirection;

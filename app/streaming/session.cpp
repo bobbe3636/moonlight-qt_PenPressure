@@ -1862,6 +1862,7 @@ void Session::start()
     m_Preferences->absoluteMouseMode = savedAbsoluteMouseMode;
     m_Preferences->backgroundGamepad = savedBackgroundGamepad;
     m_InputHandler->setGamepadsEnabled(!m_IsCompanion);
+    m_InputHandler->setMultiScreen(m_Preferences->extraScreens > 0 || m_IsCompanion);
 
     // Kick off the async connection thread then return to the caller to pump the event loop
     auto thread = new AsyncConnectionStartThread(this);

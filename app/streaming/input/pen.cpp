@@ -588,9 +588,71 @@ static void logPenStats(WacomRawReader* raw, WintabPen* wt)
     s_Stats = {};
 }
 
+// Drags across the screens' windows. While a button is held, Windows keeps sending the mouse to
+// the window where the drag started, and that one only knows its own screen: the host's cursor
+// stopped at that screen's edge. So the starting window tells the window under the pointer,
+// which moves the host's cursor onto its screen (every screen's window drives the same desktop,
+// so the dragged window or file follows). Stream windows are marked with a window property.
+static constexpr const wchar_t* k_StreamWindowProp = L"MoonlightStreamWindow";
+
+static UINT foreignPointerMessage()
+{
+    static UINT message = RegisterWindowMessageW(L"MoonlightForeignPointer");
+    return message;
+}
+
+bool SdlInputHandler::forwardPointerToOtherScreen()
+{
+    if (!m_MultiScreen || m_NativePenHwnd == nullptr) {
+        return false;
+    }
+    POINT pt;
+    if (!GetCursorPos(&pt)) {
+        return false;
+    }
+    HWND over = WindowFromPoint(pt);
+    HWND root = over != nullptr ? GetAncestor(over, GA_ROOT) : nullptr;
+    if (root == nullptr || root == (HWND)m_NativePenHwnd || GetPropW(root, k_StreamWindowProp) == nullptr) {
+        return false;
+    }
+    PostMessageW(root, foreignPointerMessage(), 0, MAKELPARAM((WORD)(SHORT)pt.x, (WORD)(SHORT)pt.y));
+    return true;
+}
+
+void SdlInputHandler::handleForeignPointer(int screenX, int screenY)
+{
+    HWND hwnd = (HWND)m_NativePenHwnd;
+    if (hwnd == nullptr || m_Window == nullptr) {
+        return;
+    }
+    POINT pt = { screenX, screenY };
+    RECT client;
+    if (!ScreenToClient(hwnd, &pt) || !GetClientRect(hwnd, &client) || client.right <= 0 || client.bottom <= 0) {
+        return;
+    }
+
+    // Physical pixels to window coordinates, then into the video region (as mouse.cpp)
+    int windowWidth, windowHeight;
+    SDL_GetWindowSize(m_Window, &windowWidth, &windowHeight);
+    int x = pt.x * windowWidth / client.right;
+    int y = pt.y * windowHeight / client.bottom;
+
+    SDL_Rect src = { 0, 0, m_StreamWidth, m_StreamHeight };
+    SDL_Rect dst = { 0, 0, windowWidth, windowHeight };
+    StreamUtils::scaleSourceToDestinationSurface(&src, &dst);
+    x = qMin(qMax(x - dst.x, 0), dst.w);
+    y = qMin(qMax(y - dst.y, 0), dst.h);
+    LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
+}
+
 static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                         UINT_PTR subclassId, DWORD_PTR refData)
 {
+    if (msg == foreignPointerMessage()) {
+        ((SdlInputHandler*)refData)->handleForeignPointer((short)LOWORD(lParam), (short)HIWORD(lParam));
+        return 0;
+    }
+
     switch (msg) {
     case WM_POINTERENTER:
     case WM_POINTERLEAVE:
@@ -656,6 +718,7 @@ void SdlInputHandler::installNativePenHook()
 
     if (SetWindowSubclass(info.info.win.window, penSubclassProc, k_PenSubclassId, (DWORD_PTR)this)) {
         m_NativePenHwnd = info.info.win.window;
+        SetPropW(info.info.win.window, k_StreamWindowProp, (HANDLE)1);
 
         // Pen input setting: 2 = Wintab (the whole pen from the tablet driver's Wintab); 0
         // (automatic) and 1 = Windows Ink, with the raw Wacom reports where we know them
@@ -682,6 +745,7 @@ void SdlInputHandler::removeNativePenHook()
     if (m_NativePenHwnd != nullptr) {
         if (IsWindow((HWND)m_NativePenHwnd)) {
             RemoveWindowSubclass((HWND)m_NativePenHwnd, penSubclassProc, k_PenSubclassId);
+            RemovePropW((HWND)m_NativePenHwnd, k_StreamWindowProp);
         }
         m_NativePenHwnd = nullptr;
     }
@@ -1083,6 +1147,8 @@ bool SdlInputHandler::handleWintabMouse(unsigned int msg)
 
 void SdlInputHandler::installNativePenHook() {}
 void SdlInputHandler::removeNativePenHook() {}
+bool SdlInputHandler::forwardPointerToOtherScreen() { return false; }
+void SdlInputHandler::handleForeignPointer(int, int) {}
 bool SdlInputHandler::handleNativePenMessage(void*, unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleNativePenMouseButton(unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleWintabMessage(void*, unsigned int, uintptr_t, intptr_t) { return false; }
