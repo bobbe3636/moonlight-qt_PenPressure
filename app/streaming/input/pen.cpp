@@ -773,6 +773,26 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         return false;
     }
 
+    // The raw Wacom reader opens again if it isn't running: a pen display's tablet goes away while
+    // its screen sleeps, so at a stream's start it may not have been there (no full pressure range,
+    // no side buttons for the whole stream), or it went away since. On the pen's use, every 2 s at most.
+    if (m_Wintab == nullptr && (m_WacomRaw == nullptr || ((WacomRawReader*)m_WacomRaw)->exited)) {
+        // Backing off to once a minute: with another tablet (no Wacom) there's nothing to find
+        uint64_t now = GetTickCount64();
+        if (now - m_LastRawReaderAttemptMs >= m_RawReaderRetryMs) {
+            m_LastRawReaderAttemptMs = now;
+            delete (WacomRawReader*)m_WacomRaw;
+            m_WacomRaw = WacomRawReader::open();
+            if (m_WacomRaw != nullptr) {
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Raw Wacom reader opened (again)");
+                m_RawReaderRetryMs = 2000;
+            }
+            else {
+                m_RawReaderRetryMs = qMin<uint32_t>(m_RawReaderRetryMs * 2, 60000);
+            }
+        }
+    }
+
     if (!m_NativePenLogged) {
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Using native Windows pen input");
         m_NativePenLogged = true;
@@ -909,9 +929,11 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         // Any other tablet's own reports: its full pressure range, and its barrel buttons
         else if (auto hidPen = (HidPenReader*)m_HidPen; hidPen != nullptr && hidPen->fresh()) {
             if (hidPen->hasBarrel) {
+                // Added to what Windows Ink says, never instead of it: a driver that turns a side
+                // button into a click (Wacom's, per its button settings) doesn't report it here
                 uint8_t pressed = hidPen->buttons;
-                penButtons = ((pressed & HidPenReader::k_Barrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
-                             ((pressed & HidPenReader::k_Barrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
+                penButtons |= ((pressed & HidPenReader::k_Barrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
+                              ((pressed & HidPenReader::k_Barrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
             }
             if (flags & POINTER_FLAG_INCONTACT) {
                 float hidPressure = hidPen->pressure;
@@ -957,6 +979,28 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
         return false;
     }
 
+    int button;
+    switch (msg) {
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        button = BUTTON_MIDDLE;
+        break;
+    default:
+        button = GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? BUTTON_X1 : BUTTON_X2;
+        break;
+    }
+    bool down = (msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN);
+    uint8_t bit = (uint8_t)(1 << (button & 7));
+
+    // A click whose press went to the host always gets its release, whatever the raw readers
+    // say by then: deciding the release separately could swallow it (a middle button held
+    // forever on the host: endless panning)
+    if (!down && (m_PenClicksForwarded & bit)) {
+        m_PenClicksForwarded &= ~bit;
+        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
+        return true;
+    }
+
     // With raw Wacom reports the side buttons already travel as pen buttons; drop the local
     // driver's synthesized click so the host doesn't get the press twice
     auto raw = (WacomRawReader*)m_WacomRaw;
@@ -970,19 +1014,11 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
         return true;
     }
 
-    int button;
-    switch (msg) {
-    case WM_MBUTTONDOWN:
-    case WM_MBUTTONUP:
-        button = BUTTON_MIDDLE;
-        break;
-    default:
-        button = GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? BUTTON_X1 : BUTTON_X2;
-        break;
+    if (down) {
+        m_PenClicksForwarded |= bit;
+        LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, button);
     }
-
-    bool down = (msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN);
-    LiSendMouseButtonEvent(down ? BUTTON_ACTION_PRESS : BUTTON_ACTION_RELEASE, button);
+    // (a release whose press didn't go to the host stays here)
     return true;
 }
 
