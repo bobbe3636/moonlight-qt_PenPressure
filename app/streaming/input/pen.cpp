@@ -54,6 +54,7 @@ struct WacomRawReader
     std::atomic<bool> seenReport { false };
     std::atomic<bool> exited { false };
     std::atomic<uint32_t> reportCount { 0 };  // for the pen statistics log line
+    std::atomic<bool> seenBarrel2 { false };  // the upper switch shows here (not with every pen and driver setting)
 
     static constexpr uint8_t k_FlagBarrel1 = 0x02;
     static constexpr uint8_t k_FlagBarrel2 = 0x04;
@@ -85,6 +86,9 @@ struct WacomRawReader
             }
 
             flags = report[1];
+            if (report[1] & k_FlagBarrel2) {
+                seenBarrel2 = true;
+            }
             pressure = (uint16_t)(report[8] | (report[9] << 8));
             if (n >= 17) {
                 distance = report[16];
@@ -1002,9 +1006,11 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     }
 
     // With raw Wacom reports the side buttons already travel as pen buttons; drop the local
-    // driver's synthesized click so the host doesn't get the press twice
+    // driver's synthesized click so the host doesn't get the press twice. Only once the raw
+    // reports have shown the upper switch: with some pens and driver settings they never do,
+    // and the click is then the only way the button gets to the host.
     auto raw = (WacomRawReader*)m_WacomRaw;
-    if (raw != nullptr && raw->fresh()) {
+    if (raw != nullptr && raw->fresh() && raw->seenBarrel2) {
         return true;
     }
     // Likewise once the tablet's own reports have shown the second barrel button (a driver that
