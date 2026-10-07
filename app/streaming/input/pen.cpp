@@ -955,7 +955,7 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         if (eventType == LI_TOUCH_EVENT_HOVER_LEAVE) {
             m_DriverMiddleHeld = false;
         }
-        if (m_DriverMiddleHeld) {
+        if (m_DriverMiddleHeld && !(raw != nullptr && raw->fresh())) {
             penButtons |= LI_PEN_BUTTON_SECONDARY;
         }
         m_LastPenButtons = penButtons;
@@ -1028,9 +1028,14 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
             m_PenClicksForwarded &= ~bit;  // from before: let it go
             LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
         }
-        if (m_DriverMiddleHeld != down) {
-            m_DriverMiddleHeld = down;
-            uint8_t buttons = (m_LastPenButtons & ~LI_PEN_BUTTON_SECONDARY) | (down ? LI_PEN_BUTTON_SECONDARY : 0);
+        // With the Cintiq's raw reports both switches already go to the host as pressed (its
+        // Wacom settings decide what they do there): the local driver's click for one of them is
+        // only dropped. Adding it too made one press two switches on the host (a double click).
+        auto raw = (WacomRawReader*)m_WacomRaw;
+        bool held = down && !(raw != nullptr && raw->fresh());
+        if (m_DriverMiddleHeld != held) {
+            m_DriverMiddleHeld = held;
+            uint8_t buttons = (m_LastPenButtons & ~LI_PEN_BUTTON_SECONDARY) | (held ? LI_PEN_BUTTON_SECONDARY : 0);
             m_LastPenButtons = buttons;
             LiSendPenEvent(LI_TOUCH_EVENT_BUTTON_ONLY, m_LastPenTool, buttons, m_LastPenX, m_LastPenY, 0.0f,
                            0.0f, 0.0f, LI_ROT_UNKNOWN, LI_TILT_UNKNOWN);
@@ -1052,7 +1057,7 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     // reports have shown the upper switch: with some pens and driver settings they never do,
     // and the click is then the only way the button gets to the host.
     auto raw = (WacomRawReader*)m_WacomRaw;
-    if (raw != nullptr && raw->fresh() && raw->seenBarrel2) {
+    if (raw != nullptr && raw->fresh()) {
         return true;
     }
     // Likewise once the tablet's own reports have shown the second barrel button (a driver that
