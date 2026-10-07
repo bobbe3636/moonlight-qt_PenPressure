@@ -772,6 +772,10 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         return false;
     }
 
+    // Whether the pen is in range, for the driver's unmarked middle click (handleNativePenMouseButton)
+    m_LastPenMessageMs = GetTickCount64();
+    m_PenInRange = msg != WM_POINTERLEAVE && msg != WM_POINTERCAPTURECHANGED;
+
     // Without host support, let Windows turn the pen into mouse input as before
     if (!(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS)) {
         return false;
@@ -986,7 +990,16 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     // bit 7 set means touch rather than pen. Right clicks are left alone: they come from
     // barrel + tap, which the host already derives from the pen's barrel flag.
     LPARAM extraInfo = GetMessageExtraInfo();
-    if ((extraInfo & 0xFFFFFF00) != 0xFF515700 || (extraInfo & 0x80)) {
+    bool fromPen = (extraInfo & 0xFFFFFF00) == 0xFF515700 && !(extraInfo & 0x80);
+
+    // Wacom's driver injects the middle click of its upper-switch setting as a plain mouse click,
+    // not marked as the pen's (its left/right clicks are). With the pen in range (seen in the last
+    // quarter second), or that click's press taken as the pen's, it's the pen's.
+    if (!fromPen && (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP) &&
+            (m_DriverMiddleHeld || (m_PenInRange && GetTickCount64() - m_LastPenMessageMs < 250))) {
+        fromPen = true;
+    }
+    if (!fromPen) {
         return false;
     }
     if (!(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS) || !isCaptureActive()) {
