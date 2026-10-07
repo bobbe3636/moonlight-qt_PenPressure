@@ -316,6 +316,9 @@ private:
     uint8_t m_PenClicksForwarded = 0; // the pen driver's clicks whose press went to the host (their release follows)
     uint64_t m_LastRawReaderAttemptMs = 0; // last (re)open of the raw Wacom reader (pen.cpp)
     uint32_t m_RawReaderRetryMs = 2000;
+    bool m_DriverMiddleHeld = false; // the pen driver's middle click (the upper switch): sent as barrel 2
+    uint8_t m_LastPenButtons = 0;    // as last sent, for a buttons-only update
+    uint8_t m_LastPenTool = 0;
     int m_PenInputMode; // StreamingPreferences::penInputMode
     bool m_NativePenLogged;
     float m_LastPenX;

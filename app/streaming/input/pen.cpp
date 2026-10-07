@@ -947,6 +947,16 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             }
         }
 
+        // The upper switch as the driver's middle click (handleNativePenMouseButton)
+        if (eventType == LI_TOUCH_EVENT_HOVER_LEAVE) {
+            m_DriverMiddleHeld = false;
+        }
+        if (m_DriverMiddleHeld) {
+            penButtons |= LI_PEN_BUTTON_SECONDARY;
+        }
+        m_LastPenButtons = penButtons;
+        m_LastPenTool = toolType;
+
         // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth
         uint16_t rotation = LI_ROT_UNKNOWN;
         uint8_t tilt = LI_TILT_UNKNOWN;
@@ -995,6 +1005,25 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
     }
     bool down = (msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN);
     uint8_t bit = (uint8_t)(1 << (button & 7));
+
+    // The upper side switch, which Wacom's driver turns into a middle click, goes to the host as
+    // the pen's second barrel button: its virtual Wacom tablet has it as the upper switch, and
+    // apps see a stylus button, as with the tablet plugged in there. As a mouse middle click in
+    // the middle of tablet input, Krita started panning and never saw it end.
+    if (button == BUTTON_MIDDLE) {
+        if (m_PenClicksForwarded & bit) {
+            m_PenClicksForwarded &= ~bit;  // from before: let it go
+            LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, button);
+        }
+        if (m_DriverMiddleHeld != down) {
+            m_DriverMiddleHeld = down;
+            uint8_t buttons = (m_LastPenButtons & ~LI_PEN_BUTTON_SECONDARY) | (down ? LI_PEN_BUTTON_SECONDARY : 0);
+            m_LastPenButtons = buttons;
+            LiSendPenEvent(LI_TOUCH_EVENT_BUTTON_ONLY, m_LastPenTool, buttons, m_LastPenX, m_LastPenY, 0.0f,
+                           0.0f, 0.0f, LI_ROT_UNKNOWN, LI_TILT_UNKNOWN);
+        }
+        return true;
+    }
 
     // A click whose press went to the host always gets its release, whatever the raw readers
     // say by then: deciding the release separately could swallow it (a middle button held
