@@ -50,6 +50,7 @@
 #define SER_BACKGROUNDGAMEPAD "backgroundgamepad"
 #define SER_REVERSESCROLL "reversescroll"
 #define SER_SWAPFACEBUTTONS "swapfacebuttons"
+#define SER_GAMEPADREMAP "gamepadremap"
 #define SER_CAPTURESYSKEYS "capturesyskeys"
 #define SER_KEEPAWAKE "keepawake"
 #define SER_EXTRASCREENS "extrascreens"
@@ -166,6 +167,7 @@ void StreamingPreferences::reload()
     backgroundGamepad = settings.value(SER_BACKGROUNDGAMEPAD, false).toBool();
     reverseScrollDirection = settings.value(SER_REVERSESCROLL, false).toBool();
     swapFaceButtons = settings.value(SER_SWAPFACEBUTTONS, false).toBool();
+    gamepadRemap = settings.value(SER_GAMEPADREMAP, QString()).toString();
     keepAwake = settings.value(SER_KEEPAWAKE, true).toBool();
     extraScreens = qBound(0, settings.value(SER_EXTRASCREENS, 0).toInt(), 2);
     extraScreensHalfBitrate = settings.value(SER_EXTRASCREENSHALFBITRATE, false).toBool();
@@ -402,6 +404,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_BACKGROUNDGAMEPAD, backgroundGamepad);
     settings.setValue(SER_REVERSESCROLL, reverseScrollDirection);
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
+    settings.setValue(SER_GAMEPADREMAP, gamepadRemap);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
     settings.setValue(SER_EXTRASCREENS, extraScreens);
@@ -508,7 +511,7 @@ void StreamingPreferences::resetAllToDefaults()
         SER_YUV444, SER_VIDEODEC, SER_WINDOWMODE, SER_MDNS, SER_QUITAPPAFTER, SER_ABSMOUSEMODE, SER_ABSTOUCHMODE,
         SER_STARTWINDOWED, SER_FRAMEPACING, SER_CONNWARNINGS, SER_CONFWARNINGS, SER_UIDISPLAYMODE, SER_RICHPRESENCE,
         SER_GAMEPADMOUSE, SER_PACKETSIZE, SER_DETECTNETBLOCKING, SER_SHOWPERFOVERLAY, SER_SWAPMOUSEBUTTONS,
-        SER_MUTEONFOCUSLOSS, SER_BACKGROUNDGAMEPAD, SER_REVERSESCROLL, SER_SWAPFACEBUTTONS, SER_CAPTURESYSKEYS,
+        SER_MUTEONFOCUSLOSS, SER_BACKGROUNDGAMEPAD, SER_REVERSESCROLL, SER_SWAPFACEBUTTONS, SER_GAMEPADREMAP, SER_CAPTURESYSKEYS,
         SER_KEEPAWAKE, SER_EXTRASCREENS, SER_EXTRASCREENSHALFBITRATE, SER_IMMERSIVEMODE, SER_PENINPUTMODE,
         SER_STREAMMENUBUTTON, SER_PRINTSCREENTOHOST, SER_REMEMBERWINDOWS, SER_LANGUAGE, SER_RENDERER,
     };

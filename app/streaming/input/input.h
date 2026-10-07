@@ -270,6 +270,7 @@ private:
     bool m_SwapMouseButtons;
     bool m_ReverseScrollDirection;
     bool m_SwapFaceButtons;
+    int m_ButtonRemap[32];  // gamepad button remapping (preferences), after the face button swap
 
     bool m_NeedsManualCaptureOnLeave;
     bool m_MouseWasInVideoRegion;

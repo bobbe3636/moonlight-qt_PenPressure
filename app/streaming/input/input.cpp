@@ -61,6 +61,21 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
         SDL_SetHint(SDL_HINT_MOUSE_AUTO_CAPTURE, "0");
     }
 
+    // Gamepad button remapping: "src:dst,..." over SDL controller buttons, on top of the swap
+    for (int i = 0; i < (int)SDL_arraysize(m_ButtonRemap); i++) {
+        m_ButtonRemap[i] = i;
+    }
+    for (const QString& pair : prefs.gamepadRemap.split(',', Qt::SkipEmptyParts)) {
+        QStringList parts = pair.split(':');
+        bool okSrc = false, okDst = false;
+        int src = parts.size() == 2 ? parts[0].toInt(&okSrc) : -1;
+        int dst = parts.size() == 2 ? parts[1].toInt(&okDst) : -1;
+        if (okSrc && okDst && src >= 0 && dst >= 0 && src < (int)SDL_arraysize(m_ButtonRemap) &&
+                dst < (int)SDL_arraysize(m_ButtonRemap)) {
+            m_ButtonRemap[src] = dst;
+        }
+    }
+
     // Allow gamepad input when the app doesn't have focus if requested
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, prefs.backgroundGamepad ? "1" : "0");
 

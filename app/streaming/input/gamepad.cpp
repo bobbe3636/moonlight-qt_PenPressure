@@ -283,6 +283,11 @@ void SdlInputHandler::handleControllerButtonEvent(SDL_ControllerButtonEvent* eve
         }
     }
 
+    // The user's button remapping, on top of the swap
+    if (event->button < SDL_arraysize(m_ButtonRemap) && m_ButtonRemap[event->button] < (int)SDL_arraysize(k_ButtonMap)) {
+        event->button = (Uint8)m_ButtonRemap[event->button];
+    }
+
     if (event->state == SDL_PRESSED) {
         state->buttons |= k_ButtonMap[event->button];
 

@@ -173,6 +173,8 @@ public:
     Q_PROPERTY(bool backgroundGamepad MEMBER backgroundGamepad NOTIFY backgroundGamepadChanged)
     Q_PROPERTY(bool reverseScrollDirection MEMBER reverseScrollDirection NOTIFY reverseScrollDirectionChanged)
     Q_PROPERTY(bool swapFaceButtons MEMBER swapFaceButtons NOTIFY swapFaceButtonsChanged)
+    // Gamepad button remapping on top of swapFaceButtons: "src:dst,..." (SDL controller buttons)
+    Q_PROPERTY(QString gamepadRemap MEMBER gamepadRemap NOTIFY gamepadRemapChanged)
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(int extraScreens MEMBER extraScreens NOTIFY extraScreensChanged)
     Q_PROPERTY(int editedScreen READ editedScreen WRITE setEditedScreen NOTIFY editedScreenChanged)
@@ -214,6 +216,7 @@ public:
     bool backgroundGamepad;
     bool reverseScrollDirection;
     bool swapFaceButtons;
+    QString gamepadRemap;
     bool keepAwake;
     int extraScreens; // 0..2 companion windows for hosts with Apollo extra screens
     bool extraScreensHalfBitrate; // extra screens stream at half the bitrate
@@ -268,6 +271,7 @@ signals:
     void backgroundGamepadChanged();
     void reverseScrollDirectionChanged();
     void swapFaceButtonsChanged();
+    void gamepadRemapChanged();
     void captureSysKeysModeChanged();
     void keepAwakeChanged();
     void extraScreensChanged();

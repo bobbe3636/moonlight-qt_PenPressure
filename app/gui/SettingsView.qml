@@ -1906,6 +1906,122 @@ Flickable {
                     ToolTip.text: qsTr("This switches gamepads into a Nintendo-style button layout")
                 }
 
+                Column {
+                    id: remapColumn
+                    width: parent.width
+                    spacing: 4
+
+                    // In SDL's order (which is how they're stored)
+                    property var names: [
+                        qsTr("A (Cross)"), qsTr("B (Circle)"), qsTr("X (Square)"), qsTr("Y (Triangle)"),
+                        qsTr("Back (Share / Select)"), qsTr("Guide (PS)"), qsTr("Start (Options)"),
+                        qsTr("Left stick click (L3)"), qsTr("Right stick click (R3)"),
+                        qsTr("LB (L1)"), qsTr("RB (R1)"),
+                        qsTr("D-pad up"), qsTr("D-pad down"), qsTr("D-pad left"), qsTr("D-pad right"),
+                        qsTr("Misc (Mute / Capture)"),
+                        qsTr("Paddle 1"), qsTr("Paddle 2"), qsTr("Paddle 3"), qsTr("Paddle 4"),
+                        qsTr("Touchpad click")
+                    ]
+                    // The buttons listed (paddles left out: few controllers have them)
+                    property var shown: [0, 1, 2, 3, 9, 10, 4, 6, 5, 7, 8, 11, 12, 13, 14, 15, 20]
+                    property var map: parseRemap(StreamingPreferences.gamepadRemap)
+
+                    function parseRemap(text) {
+                        var m = []
+                        for (var i = 0; i < names.length; i++) {
+                            m.push(i)
+                        }
+                        if (text) {
+                            var pairs = text.split(",")
+                            for (var p = 0; p < pairs.length; p++) {
+                                var kv = pairs[p].split(":")
+                                var a = parseInt(kv[0]), b = parseInt(kv[1])
+                                if (a >= 0 && a < m.length && b >= 0 && b < m.length) {
+                                    m[a] = b
+                                }
+                            }
+                        }
+                        return m
+                    }
+
+                    function save(m) {
+                        var parts = []
+                        for (var i = 0; i < m.length; i++) {
+                            if (m[i] !== i) {
+                                parts.push(i + ":" + m[i])
+                            }
+                        }
+                        StreamingPreferences.gamepadRemap = parts.join(",")
+                        map = m
+                    }
+
+                    function setTarget(source, target) {
+                        var m = map.slice()
+                        m[source] = target
+                        save(m)
+                    }
+
+                    Label {
+                        width: parent.width
+                        text: qsTr("Button remapping (on top of the swap above; applies from the next stream)")
+                        font.pointSize: 12
+                        wrapMode: Text.Wrap
+                    }
+
+                    Row {
+                        spacing: 10
+
+                        AutoResizingComboBox {
+                            id: remapPresetComboBox
+                            textRole: "text"
+                            model: ListModel {
+                                ListElement { text: qsTr("Presets...") ; remap: "" }
+                                ListElement { text: qsTr("Default (no remapping)") ; remap: "" }
+                                ListElement { text: qsTr("Nintendo layout: A<->B and X<->Y") ; remap: "0:1,1:0,2:3,3:2" }
+                                ListElement { text: qsTr("A<->B only") ; remap: "0:1,1:0" }
+                                ListElement { text: qsTr("X<->Y only") ; remap: "2:3,3:2" }
+                            }
+                            onActivated: {
+                                if (currentIndex > 0) {
+                                    remapColumn.save(remapColumn.parseRemap(model.get(currentIndex).remap))
+                                }
+                                currentIndex = 0
+                            }
+                        }
+                    }
+
+                    Repeater {
+                        model: remapColumn.shown
+
+                        Row {
+                            spacing: 10
+
+                            Label {
+                                width: 230
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: remapColumn.names[modelData] + qsTr(" sends")
+                                font.pointSize: 11
+                                elide: Text.ElideRight
+                            }
+
+                            ComboBox {
+                                id: remapTargetCombo
+                                width: 260
+                                model: remapColumn.names
+                                currentIndex: remapColumn.map[modelData]
+                                onActivated: remapColumn.setTarget(modelData, currentIndex)
+
+                                Connections {
+                                    target: remapColumn
+                                    function onMapChanged() {
+                                        remapTargetCombo.currentIndex = remapColumn.map[modelData]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 CheckBox {
                     id: singleControllerCheck
                     width: parent.width
