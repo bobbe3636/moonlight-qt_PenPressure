@@ -57,8 +57,10 @@ struct WacomRawReader
     std::atomic<uint32_t> reportCount { 0 };  // for the pen statistics log line
     std::atomic<bool> seenBarrel2 { false };  // the upper switch shows here (not with every pen and driver setting)
 
+    static constexpr uint8_t k_FlagTip = 0x01;
     static constexpr uint8_t k_FlagBarrel1 = 0x02;
     static constexpr uint8_t k_FlagBarrel2 = 0x04;
+    static constexpr uint8_t k_FlagEraserTip = 0x08;
     static constexpr float k_MaxPressure = 8191.0f;
     static constexpr float k_MaxDistance = 63.0f;
 
@@ -1019,6 +1021,19 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             uint8_t rawFlags = raw->flags;
             penButtons = ((rawFlags & WacomRawReader::k_FlagBarrel1) ? LI_PEN_BUTTON_PRIMARY : 0) |
                          ((rawFlags & WacomRawReader::k_FlagBarrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
+
+            // Wacom's driver performs a side switch's click (its right click setting) as a touch of
+            // the pen without pressure, while the tablet says the tip is up. Sent as a touch, the
+            // host's tablet got its switch with the tip down, and its driver (hover click) did
+            // nothing: it's hovering.
+            bool rawTouching = rawFlags & (WacomRawReader::k_FlagTip | WacomRawReader::k_FlagEraserTip);
+            bool windowsPressure = (pen.penMask & PEN_MASK_PRESSURE) && pen.pressure > 0;
+            if (!rawTouching && raw->pressure == 0 && !windowsPressure &&
+                    ((flags & POINTER_FLAG_INCONTACT) || eventType == LI_TOUCH_EVENT_DOWN)) {
+                flags &= ~POINTER_FLAG_INCONTACT;
+                eventType = m_PenContactSent ? LI_TOUCH_EVENT_UP : LI_TOUCH_EVENT_HOVER;
+            }
+
             if (flags & POINTER_FLAG_INCONTACT) {
                 uint16_t rawPressure = raw->pressure;
                 if (rawPressure > 0) {
@@ -1057,6 +1072,16 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         }
         m_LastPenButtons = penButtons;
         m_LastPenTool = toolType;
+
+        // A touch the host hasn't seen start begins with a down, and a lift of one it hasn't seen
+        // is hovering (around the driver's touches taken as hovering above)
+        if (eventType == LI_TOUCH_EVENT_MOVE && !m_PenContactSent) {
+            eventType = LI_TOUCH_EVENT_DOWN;
+        }
+        else if (eventType == LI_TOUCH_EVENT_UP && !m_PenContactSent) {
+            eventType = LI_TOUCH_EVENT_HOVER;
+        }
+        m_PenContactSent = eventType == LI_TOUCH_EVENT_DOWN || eventType == LI_TOUCH_EVENT_MOVE;
 
         // Windows gives X/Y tilt; the protocol wants tilt from vertical plus azimuth
         uint16_t rotation = LI_ROT_UNKNOWN;
