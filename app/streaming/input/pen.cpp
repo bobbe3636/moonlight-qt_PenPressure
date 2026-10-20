@@ -823,6 +823,18 @@ void SdlInputHandler::installNativePenHook()
         m_NativePenHwnd = info.info.win.window;
         SetPropW(info.info.win.window, k_StreamWindowProp, (HANDLE)1);
 
+        // No Windows pen and touch feedback over the stream (tap ripples, the press-and-hold and
+        // right-click rings, drawn also for the tablet driver's own clicks): the host shows its own
+        static const FEEDBACK_TYPE k_NoFeedback[] = {
+            FEEDBACK_TOUCH_CONTACTVISUALIZATION, FEEDBACK_PEN_BARRELVISUALIZATION, FEEDBACK_PEN_TAP,
+            FEEDBACK_PEN_DOUBLETAP, FEEDBACK_PEN_PRESSANDHOLD, FEEDBACK_PEN_RIGHTTAP, FEEDBACK_TOUCH_TAP,
+            FEEDBACK_TOUCH_DOUBLETAP, FEEDBACK_TOUCH_PRESSANDHOLD, FEEDBACK_TOUCH_RIGHTTAP, FEEDBACK_GESTURE_PRESSANDTAP,
+        };
+        BOOL off = FALSE;
+        for (FEEDBACK_TYPE type : k_NoFeedback) {
+            SetWindowFeedbackSetting(info.info.win.window, type, 0, sizeof(off), &off);
+        }
+
         // Pen input setting: 2 = Wintab (the whole pen from the tablet driver's Wintab); 0
         // (automatic) and 1 = Windows Ink, with the raw Wacom reports where we know them
         if (m_PenInputMode == 2) {
