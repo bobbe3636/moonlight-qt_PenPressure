@@ -784,6 +784,25 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
+// The Wacom driver's service: with it, an unmarked middle click while the pen is near is the
+// pen's upper switch. Other drivers (Huion's) turn their pen's buttons into plain clicks of the
+// user's choice, which go to the host as those clicks.
+static bool wacomDriverInstalled()
+{
+    bool found = false;
+    if (SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)) {
+        for (const wchar_t* name : { L"WTabletServicePro", L"WTabletServiceCon" }) {
+            if (SC_HANDLE service = OpenServiceW(scm, name, SERVICE_QUERY_STATUS)) {
+                CloseServiceHandle(service);
+                found = true;
+                break;
+            }
+        }
+        CloseServiceHandle(scm);
+    }
+    return found;
+}
+
 void SdlInputHandler::installNativePenHook()
 {
     SDL_SysWMinfo info;
@@ -791,6 +810,7 @@ void SdlInputHandler::installNativePenHook()
     if (m_Window == nullptr || m_NativePenHwnd != nullptr) {
         return;
     }
+    m_WacomDriver = wacomDriverInstalled();
 
     SDL_VERSION(&info.version);
     if (!SDL_GetWindowWMInfo(m_Window, &info) || info.subsystem != SDL_SYSWM_WINDOWS) {
@@ -1071,9 +1091,11 @@ bool SdlInputHandler::handleNativePenMouseButton(unsigned int msg, uintptr_t wPa
 
     // Wacom's driver injects the middle click of its upper-switch setting as a plain mouse click,
     // not marked as the pen's (its left/right clicks are). With the pen in range (seen in the last
-    // quarter second), or that click's press taken as the pen's, it's the pen's.
+    // quarter second), or that click's press taken as the pen's, it's the pen's. Only with the Wacom
+    // driver: Huion's injects the clicks its buttons are set to, which stay those clicks (as the
+    // pen's second button, the host's tablet made it whatever its own top button does).
     if (!fromPen && (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP) &&
-            (m_DriverMiddleHeld || (m_PenInRange && GetTickCount64() - m_LastPenMessageMs < 250))) {
+            (m_DriverMiddleHeld || (m_WacomDriver && m_PenInRange && GetTickCount64() - m_LastPenMessageMs < 250))) {
         fromPen = true;
     }
     if (!fromPen) {
