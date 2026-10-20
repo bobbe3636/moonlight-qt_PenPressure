@@ -84,7 +84,8 @@ struct DualSenseOutputReport{
 class SdlInputHandler
 {
 public:
-    explicit SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight);
+    // gamepads = false: no gamepad support at all (the other screens' windows)
+    explicit SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight, bool gamepads = true);
 
     ~SdlInputHandler();
 
@@ -262,6 +263,7 @@ private:
     SDL_Window* m_Window;
     bool m_MultiController;
     bool m_GamepadsEnabled = true;
+    bool m_GamepadSubsystems = false;  // we started SDL's joystick and gamecontroller subsystems
     bool m_MultiScreen = false;
 
     // A drag started here is over another screen's window: tell that window (pen.cpp, Windows)

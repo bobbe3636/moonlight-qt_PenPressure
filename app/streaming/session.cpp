@@ -1858,7 +1858,7 @@ void Session::start()
     if (m_Preferences->extraScreens > 0 && !m_IsCompanion) {
         m_Preferences->backgroundGamepad = true;
     }
-    m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height);
+    m_InputHandler = new SdlInputHandler(*m_Preferences, m_StreamConfig.width, m_StreamConfig.height, !m_IsCompanion);
     m_Preferences->absoluteMouseMode = savedAbsoluteMouseMode;
     m_Preferences->backgroundGamepad = savedBackgroundGamepad;
     m_InputHandler->setGamepadsEnabled(!m_IsCompanion);
