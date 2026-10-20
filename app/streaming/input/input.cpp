@@ -9,7 +9,7 @@
 #include <QDir>
 #include <QGuiApplication>
 
-SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight)
+SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, int streamHeight, bool gamepads)
     : m_MultiController(prefs.multiController),
       m_GamepadMouse(prefs.gamepadMouse),
       m_SwapMouseButtons(prefs.swapMouseButtons),
@@ -136,20 +136,28 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, streamIgnoreDevices.toUtf8());
     SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT, streamIgnoreDevicesExcept.toUtf8());
 
+    // The other screens' windows don't start SDL's gamepad support at all. Ignoring the gamepads
+    // wasn't enough: with them started, the window in the foreground took the gamepad's input
+    // from screen 1's window (some of Windows' gamepad input only goes to the foreground app).
+    m_GamepadsEnabled = gamepads;
+    m_GamepadSubsystems = gamepads;
+
     // We must initialize joystick explicitly before gamecontroller in order
     // to ensure we receive gamecontroller attach events for gamepads where
     // SDL doesn't have a built-in mapping. By starting joystick first, we
     // can allow mapping manager to update the mappings before GC attach
     // events are generated.
-    SDL_assert(!SDL_WasInit(SDL_INIT_JOYSTICK));
-    if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) != 0) {
+    SDL_assert(!gamepads || !SDL_WasInit(SDL_INIT_JOYSTICK));
+    if (gamepads && SDL_InitSubSystem(SDL_INIT_JOYSTICK) != 0) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_InitSubSystem(SDL_INIT_JOYSTICK) failed: %s",
                      SDL_GetError());
     }
 
-    MappingManager mappingManager;
-    mappingManager.applyMappings();
+    if (gamepads) {
+        MappingManager mappingManager;
+        mappingManager.applyMappings();
+    }
 
     // Flush gamepad arrival and departure events which may be queued before
     // starting the gamecontroller subsystem again. This prevents us from
@@ -159,8 +167,8 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
 
     // We need to reinit this each time, since you only get
     // an initial set of gamepad arrival events once per init.
-    SDL_assert(!SDL_WasInit(SDL_INIT_GAMECONTROLLER));
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+    SDL_assert(!gamepads || !SDL_WasInit(SDL_INIT_GAMECONTROLLER));
+    if (gamepads && SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) failed: %s",
                      SDL_GetError());
@@ -178,7 +186,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     // Initialize the gamepad mask with currently attached gamepads to avoid
     // causing gamepads to unexpectedly disappear and reappear on the host
     // during stream startup as we detect currently attached gamepads one at a time.
-    m_GamepadMask = getAttachedGamepadMask();
+    m_GamepadMask = gamepads ? getAttachedGamepadMask() : 0;
 
     SDL_zero(m_GamepadState);
     SDL_zero(m_LastTouchDownEvent);
@@ -215,11 +223,13 @@ SdlInputHandler::~SdlInputHandler()
     SDL_assert(!SDL_WasInit(SDL_INIT_HAPTIC));
 #endif
 
-    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
-    SDL_assert(!SDL_WasInit(SDL_INIT_GAMECONTROLLER));
+    if (m_GamepadSubsystems) {
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
+        SDL_assert(!SDL_WasInit(SDL_INIT_GAMECONTROLLER));
 
-    SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
-    SDL_assert(!SDL_WasInit(SDL_INIT_JOYSTICK));
+        SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
+        SDL_assert(!SDL_WasInit(SDL_INIT_JOYSTICK));
+    }
 
     // Return background event handling to off
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
