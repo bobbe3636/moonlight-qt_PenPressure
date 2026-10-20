@@ -13,6 +13,7 @@
 #include <hidsdi.h>
 
 #include <atomic>
+#include <climits>
 #include <cmath>
 #include <map>
 #include <thread>
@@ -605,6 +606,79 @@ static UINT foreignPointerMessage()
     return message;
 }
 
+static bool clientRectOnScreen(HWND hwnd, RECT& rect)
+{
+    POINT topLeft = { 0, 0 }, bottomRight;
+    if (!GetClientRect(hwnd, &rect) || !ClientToScreen(hwnd, &topLeft)) {
+        return false;
+    }
+    bottomRight = { rect.right, rect.bottom };
+    if (!ClientToScreen(hwnd, &bottomRight)) {
+        return false;
+    }
+    rect = { topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };
+    return rect.right > rect.left && rect.bottom > rect.top;
+}
+
+struct StreamWindowSearch {
+    HWND self;
+    std::vector<HWND> found;
+};
+
+static BOOL CALLBACK collectStreamWindow(HWND hwnd, LPARAM param)
+{
+    auto search = (StreamWindowSearch*)param;
+    if (hwnd != search->self && IsWindowVisible(hwnd) && !IsIconic(hwnd) && GetPropW(hwnd, k_StreamWindowProp) != nullptr) {
+        search->found.push_back(hwnd);
+    }
+    return TRUE;
+}
+
+// Between this window and another screen's (borders, title bars, the space between windowed
+// screens), the window the pointer is heading into, and the point of it nearest the pointer.
+// Without it the host's cursor waited at its screen's edge meanwhile, and Windows 11 snapped
+// the dragged window to that side.
+static HWND streamWindowAcrossGap(HWND self, POINT pt, POINT& into)
+{
+    static constexpr LONG k_MaxGap = 300;   // farther apart: not a neighbor
+    static constexpr LONG k_Overlap = 16;   // neighbors may overlap a little
+    static constexpr LONG k_Slack = 64;     // off to the side of the neighbor by up to this much
+
+    RECT a;
+    if (!clientRectOnScreen(self, a) || PtInRect(&a, pt)) {
+        return nullptr;
+    }
+    StreamWindowSearch search { self, {} };
+    EnumWindows(collectStreamWindow, (LPARAM)&search);
+
+    HWND best = nullptr;
+    LONG bestDistance = LONG_MAX;
+    for (HWND hwnd : search.found) {
+        RECT b;
+        if (!clientRectOnScreen(hwnd, b)) {
+            continue;
+        }
+        bool alongY = pt.y >= b.top - k_Slack && pt.y < b.bottom + k_Slack;
+        bool alongX = pt.x >= b.left - k_Slack && pt.x < b.right + k_Slack;
+        bool between =
+            (alongY && b.left >= a.right - k_Overlap && b.left - a.right <= k_MaxGap && pt.x >= a.right && pt.x < b.right) ||
+            (alongY && b.right <= a.left + k_Overlap && a.left - b.right <= k_MaxGap && pt.x < a.left && pt.x >= b.left) ||
+            (alongX && b.top >= a.bottom - k_Overlap && b.top - a.bottom <= k_MaxGap && pt.y >= a.bottom && pt.y < b.bottom) ||
+            (alongX && b.bottom <= a.top + k_Overlap && a.top - b.bottom <= k_MaxGap && pt.y < a.top && pt.y >= b.top);
+        if (!between) {
+            continue;
+        }
+        POINT nearest = { qMin(qMax(pt.x, b.left), b.right - 1), qMin(qMax(pt.y, b.top), b.bottom - 1) };
+        LONG distance = qAbs(nearest.x - pt.x) + qAbs(nearest.y - pt.y);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            best = hwnd;
+            into = nearest;
+        }
+    }
+    return best;
+}
+
 bool SdlInputHandler::forwardPointerToOtherScreen()
 {
     if (!m_MultiScreen || m_NativePenHwnd == nullptr) {
@@ -617,7 +691,10 @@ bool SdlInputHandler::forwardPointerToOtherScreen()
     HWND over = WindowFromPoint(pt);
     HWND root = over != nullptr ? GetAncestor(over, GA_ROOT) : nullptr;
     if (root == nullptr || root == (HWND)m_NativePenHwnd || GetPropW(root, k_StreamWindowProp) == nullptr) {
-        return false;
+        root = streamWindowAcrossGap((HWND)m_NativePenHwnd, pt, pt);
+        if (root == nullptr) {
+            return false;
+        }
     }
     PostMessageW(root, foreignPointerMessage(), 0, MAKELPARAM((WORD)(SHORT)pt.x, (WORD)(SHORT)pt.y));
     return true;
