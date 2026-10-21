@@ -2671,6 +2671,11 @@ void Session::setExtraScreenCount(int count)
         int screen = m_Companions.size() + 2;
         m_Companions.append({ screen, startCompanionScreen(screen) });
     }
+
+    // This window streams with several screens now (or one again)
+    if (m_InputHandler != nullptr && !m_IsCompanion) {
+        m_InputHandler->setExtraScreensActive(count > 0, m_Preferences->absoluteMouseMode, m_Preferences->backgroundGamepad);
+    }
 }
 
 void Session::reconnectWithResolution(int width, int height)

@@ -372,6 +372,29 @@ bool SdlInputHandler::isSystemKeyCaptureActive()
     return true;
 }
 
+// Screens added or removed from the menu during the session. What screen 1's window needs for
+// several screens is otherwise set when the session starts, so a session started with one screen
+// lacked it: the drag across the screens' windows, the remote desktop (absolute) mouse that lets
+// the pointer move on to the other windows, and the gamepad read in the background, also while
+// another screen's window has focus. Back to one screen: the user's own settings again.
+void SdlInputHandler::setExtraScreensActive(bool active, bool absoluteMousePref, bool backgroundGamepadPref)
+{
+    m_MultiScreen = active;
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, (active || backgroundGamepadPref) ? "1" : "0");
+
+    bool absolute = active || absoluteMousePref;
+    if (absolute != m_AbsoluteMouseMode) {
+        bool capturing = isCaptureActive();
+        if (capturing) {
+            setCaptureActive(false);
+        }
+        m_AbsoluteMouseMode = absolute;
+        if (capturing) {
+            setCaptureActive(true);
+        }
+    }
+}
+
 void SdlInputHandler::setCaptureActive(bool active)
 {
     if (active) {
