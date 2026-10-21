@@ -153,6 +153,9 @@ public:
     // Several screens (each its own window): a drag goes on across their windows (mouse.cpp)
     void setMultiScreen(bool multiScreen) { m_MultiScreen = multiScreen; }
 
+    // Screens added or removed during the session (screen 1's window): see input.cpp
+    void setExtraScreensActive(bool active, bool absoluteMousePref, bool backgroundGamepadPref);
+
     // Another screen's window hands us the pointer while a drag it started is over us
     // (screen coordinates): the host's cursor moves onto our screen (pen.cpp, Windows)
     void handleForeignPointer(int screenX, int screenY);
