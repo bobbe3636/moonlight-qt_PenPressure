@@ -1990,31 +1990,51 @@ Flickable {
                         }
                     }
 
-                    Repeater {
-                        model: remapColumn.shown
+                    // The per-button list is built only when asked for: 17 dropdowns made opening
+                    // the settings page slower for everyone
+                    Button {
+                        id: remapCustomizeButton
+                        property bool expanded: false
+                        text: expanded ? qsTr("Hide individual buttons") : qsTr("Customize individual buttons...")
+                        font.pointSize: 10
+                        onClicked: expanded = !expanded
+                    }
 
-                        Row {
-                            spacing: 10
+                    Loader {
+                        width: parent.width
+                        active: remapCustomizeButton.expanded
+                        visible: active
 
-                            Label {
-                                width: 230
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: remapColumn.names[modelData] + qsTr(" sends")
-                                font.pointSize: 11
-                                elide: Text.ElideRight
-                            }
+                        sourceComponent: Column {
+                            spacing: 4
 
-                            ComboBox {
-                                id: remapTargetCombo
-                                width: 260
-                                model: remapColumn.names
-                                currentIndex: remapColumn.map[modelData]
-                                onActivated: remapColumn.setTarget(modelData, currentIndex)
+                            Repeater {
+                                model: remapColumn.shown
 
-                                Connections {
-                                    target: remapColumn
-                                    function onMapChanged() {
-                                        remapTargetCombo.currentIndex = remapColumn.map[modelData]
+                                Row {
+                                    spacing: 10
+
+                                    Label {
+                                        width: 230
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: remapColumn.names[modelData] + qsTr(" sends")
+                                        font.pointSize: 11
+                                        elide: Text.ElideRight
+                                    }
+
+                                    ComboBox {
+                                        id: remapTargetCombo
+                                        width: 260
+                                        model: remapColumn.names
+                                        currentIndex: remapColumn.map[modelData]
+                                        onActivated: remapColumn.setTarget(modelData, currentIndex)
+
+                                        Connections {
+                                            target: remapColumn
+                                            function onMapChanged() {
+                                                remapTargetCombo.currentIndex = remapColumn.map[modelData]
+                                            }
+                                        }
                                     }
                                 }
                             }
