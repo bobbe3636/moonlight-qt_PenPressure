@@ -1333,6 +1333,16 @@ private:
             } catch (const QtNetworkReplyException&) {
             }
 
+            // The extra screens' too: the host may keep their displays after a disconnect
+            if (!m_Session->m_IsCompanion) {
+                QList<int> screens;
+                for (int screen = 2; screen <= m_Session->m_MostExtraScreens + 1; screen++) {
+                    screens.append(screen);
+                }
+                m_Session->quitScreenHosts(screens, true);
+                QSettings().setValue("companions/kept", 0);
+            }
+
             // Session is finished now
             emit m_Session->sessionFinished(m_Session->m_PortTestResults);
         }
@@ -2530,7 +2540,58 @@ DispatchDeferredCleanup:
 void Session::startCompanionScreens()
 {
     if (!m_IsCompanion) {
+        // A previous session with more screens may have left them on the host (it keeps the
+        // displays after a disconnect): those beyond today's count end, removing their displays
+        QSettings settings;
+        int kept = settings.value("companions/kept", 0).toInt();
+        QList<int> surplus;
+        for (int screen = m_Preferences->extraScreens + 2; screen <= kept + 1; screen++) {
+            surplus.append(screen);
+        }
+        quitScreenHosts(surplus, false);
+        settings.setValue("companions/kept", m_Preferences->extraScreens);
+        m_MostExtraScreens = m_Preferences->extraScreens;
+
         takeOverCompanions(m_Preferences->extraScreens);
+    }
+}
+
+// The host (Apollo) keeps a screen's virtual display while that screen's app runs, also after a
+// disconnect (its keep_screens setting): so that apps whose window is on it carry on, and the
+// screen resumes as it was. Quitting, or a screen no longer used, ends that app: the display goes.
+void Session::quitScreenHosts(QList<int> screens, bool wait)
+{
+    if (screens.isEmpty()) {
+        return;
+    }
+    QString address;
+    uint16_t httpPort, httpsPort;
+    QSslCertificate serverCert;
+    {
+        QReadLocker lock(&m_Computer->lock);
+        address = m_Computer->activeAddress.address();
+        httpPort = m_Computer->activeAddress.port() ? m_Computer->activeAddress.port() : DEFAULT_HTTP_PORT;
+        httpsPort = m_Computer->activeHttpsPort ? m_Computer->activeHttpsPort : DEFAULT_HTTPS_PORT;
+        serverCert = m_Computer->serverCert;
+    }
+    auto quit = [=]() {
+        for (int screen : screens) {
+            // Apollo's extra screen N listens on the main ports + 1000 * (N - 1)
+            int offset = 1000 * (screen - 1);
+            NvHTTP http(NvAddress(address, httpPort + offset), httpsPort + offset, serverCert, true);
+            try {
+                http.quitApp();
+                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Ended the host app of screen %d", screen);
+            } catch (const GfeHttpResponseException&) {
+            } catch (const QtNetworkReplyException&) {
+            }
+        }
+    };
+    if (wait) {
+        quit();
+    }
+    else {
+        QThreadPool::globalInstance()->start(quit);
     }
 }
 
@@ -2662,11 +2723,16 @@ void Session::setExtraScreenCount(int count)
     m_Preferences->save();
 
     // Close screens above the new count, open the missing ones (screens 2, 3 in order)
+    QList<int> closed;
     while (m_Companions.size() > count) {
         Companion companion = m_Companions.takeLast();
         askCompanionToClose(companion.pid);
         finishCompanion(companion.pid);
+        closed.append(companion.screen);
     }
+    quitScreenHosts(closed, false);
+    QSettings().setValue("companions/kept", count);
+    m_MostExtraScreens = qMax(m_MostExtraScreens, count);
     while (m_Companions.size() < count) {
         int screen = m_Companions.size() + 2;
         m_Companions.append({ screen, startCompanionScreen(screen) });

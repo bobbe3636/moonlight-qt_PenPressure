@@ -132,6 +132,8 @@ public:
     qint64 startCompanionScreen(int screen);  // its process id, 0 if it didn't start
 
     void stopCompanionScreens();
+    // Ends the host app on these extra screens (see session.cpp); wait: here, else in the background
+    void quitScreenHosts(QList<int> screens, bool wait);
 
 public:
     // ---- Stream menu (the floating button's menu) ----
@@ -351,6 +353,7 @@ private:
         qint64 pid;
     };
     QList<Companion> m_Companions;
+    int m_MostExtraScreens = 0;  // the most extra screens this session had
     SDL_Window* m_Window;
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
