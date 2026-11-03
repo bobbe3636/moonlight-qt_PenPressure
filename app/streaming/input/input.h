@@ -325,6 +325,7 @@ private:
     bool m_DriverMiddleHeld = false; // the pen driver's middle click (the upper switch): sent as barrel 2
     bool m_PenInRange = false;       // the pen hovers or touches (WM_POINTER)
     bool m_PenContactSent = false;   // the host has the pen touching (the last pen event sent)
+    uint64_t m_LastFocusRequestMs = 0;  // the pen last took the focus from another screen's window
     bool m_WacomDriver = false;      // the Wacom driver is installed here (its middle click is the upper switch)
     uint64_t m_LastPenMessageMs = 0;
     uint8_t m_LastPenButtons = 0;    // as last sent, for a buttons-only update

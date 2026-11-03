@@ -608,6 +608,14 @@ static UINT foreignPointerMessage()
     return message;
 }
 
+// Sent to the stream window that has the focus: give it to this one (wParam). Windows lets the
+// foreground window's process do that when another process can't take it.
+static UINT takeFocusMessage()
+{
+    static UINT message = RegisterWindowMessageW(L"MoonlightTakeFocus");
+    return message;
+}
+
 static bool clientRectOnScreen(HWND hwnd, RECT& rect)
 {
     POINT topLeft = { 0, 0 }, bottomRight;
@@ -733,6 +741,13 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 {
     if (msg == foreignPointerMessage()) {
         ((SdlInputHandler*)refData)->handleForeignPointer((short)LOWORD(lParam), (short)HIWORD(lParam));
+        return 0;
+    }
+    if (msg == takeFocusMessage()) {
+        HWND target = (HWND)wParam;
+        if (IsWindow(target) && GetPropW(target, k_StreamWindowProp) != nullptr) {
+            SetForegroundWindow(target);
+        }
         return 0;
     }
 
@@ -886,6 +901,23 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
     // Whether the pen is in range, for the driver's unmarked middle click (handleNativePenMouseButton)
     m_LastPenMessageMs = GetTickCount64();
     m_PenInRange = msg != WM_POINTERLEAVE && msg != WM_POINTERCAPTURECHANGED;
+
+    // Focus follows the pen between the screens' windows. After work on another screen with the
+    // mouse, that screen's window kept the focus: the pen's clicks and the keys went there, and
+    // the host's cursor jumped back to it. The window the pen is over takes it, only ever from
+    // another of our stream windows (the pen passing over the stream leaves other apps alone).
+    if (m_PenInRange && m_MultiScreen) {
+        HWND root = GetAncestor(hwnd, GA_ROOT);
+        HWND foreground = GetForegroundWindow();
+        if (foreground != nullptr && foreground != root && GetPropW(foreground, k_StreamWindowProp) != nullptr &&
+                m_LastPenMessageMs - m_LastFocusRequestMs >= 250) {
+            m_LastFocusRequestMs = m_LastPenMessageMs;
+            if (!SetForegroundWindow(root)) {
+                PostMessageW(foreground, takeFocusMessage(), (WPARAM)root, 0);
+            }
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Pen over this screen's window: it takes the focus");
+        }
+    }
 
     // Without host support, let Windows turn the pen into mouse input as before
     if (!(LiGetHostFeatureFlags() & LI_FF_PEN_TOUCH_EVENTS)) {
