@@ -576,6 +576,17 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
         state->controller = controller;
         state->jsId = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(state->controller));
 
+        // Back within the grace period after it went (see SDL_CONTROLLERDEVICEREMOVED below):
+        // the host was never told, and isn't told of an arrival either
+        bool returning = m_MultiController && m_GamepadGonePending[state->index];
+        if (returning) {
+            m_GamepadGonePending[state->index] = false;
+            m_GamepadGoneGeneration[state->index]++;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Gamepad %d is back: the host kept it meanwhile",
+                        state->index);
+        }
+
         hapticCaps = 0;
 #if SDL_VERSION_ATLEAST(2, 0, 18)
         hapticCaps |= SDL_GameControllerHasRumble(controller) ? ML_HAPTIC_GC_RUMBLE : 0;
@@ -747,7 +758,13 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
 #endif
             type == LI_CTYPE_PS;
 
-        LiSendControllerArrivalEvent(state->index, m_GamepadMask, type, supportedButtonFlags, capabilities);
+        if (returning) {
+            // The host still has this gamepad from before the dropout: it carries on
+            sendGamepadState(state);
+        }
+        else {
+            LiSendControllerArrivalEvent(state->index, m_GamepadMask, type, supportedButtonFlags, capabilities);
+        }
 #else
 
         // Send an empty event to tell the PC we've arrived
@@ -775,20 +792,31 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
             }
 #endif
 
-            // Remove this from the gamepad mask in MC-mode
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Gamepad %d is gone",
+                        state->index);
+
+            // The host isn't told at once (MC-mode; otherwise it never is): a wireless gamepad
+            // drops out for a moment now and then, and one switching off is reported as gone,
+            // back and gone again within seconds. Each of those unplugged and plugged the host's
+            // gamepad, and a game lost its controller for a dropout it needn't have noticed. The
+            // host's gamepad stays, with nothing pressed, for a few seconds: back by then, it
+            // just carries on (finishGamepadRemoval() otherwise).
             if (m_MultiController) {
                 SDL_assert(m_GamepadMask & (1 << state->index));
-                m_GamepadMask &= ~(1 << state->index);
+                int index = state->index;
+                if (index >= 0 && index < MAX_GAMEPADS) {
+                    m_GamepadGonePending[index] = true;
+                    uint32_t generation = ++m_GamepadGoneGeneration[index] & 0xFFFFFF;
+                    SDL_AddTimer(k_GamepadGoneGraceMs, gamepadGoneTimerCallback,
+                                 (void*)(uintptr_t)(((uint32_t)index << 24) | generation));
+                }
             }
             else {
                 SDL_assert(m_GamepadMask == 0x1);
             }
 
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "Gamepad %d is gone",
-                        state->index);
-
-            // Send a final event to let the PC know this gamepad is gone
+            // Nothing pressed (and, outside MC-mode, the final event as before)
             LiSendMultiControllerEvent(state->index, m_GamepadMask,
                                        0, 0, 0, 0, 0, 0, 0);
 
@@ -796,6 +824,35 @@ void SdlInputHandler::handleControllerDeviceEvent(SDL_ControllerDeviceEvent* eve
             SDL_memset(state, 0, sizeof(*state));
         }
     }
+}
+
+// Runs on SDL's timer thread: hands over to the main thread (Session's event loop)
+Uint32 SdlInputHandler::gamepadGoneTimerCallback(Uint32, void* param)
+{
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_GAMECONTROLLER_GONE;
+    event.user.data1 = param;
+    SDL_PushEvent(&event);
+    return 0;
+}
+
+// A gamepad that went and didn't come back within the grace period: now the host is told
+void SdlInputHandler::finishGamepadRemoval(uintptr_t indexAndGeneration)
+{
+    int index = (int)(indexAndGeneration >> 24);
+    uint32_t generation = (uint32_t)(indexAndGeneration & 0xFFFFFF);
+    if (index < 0 || index >= MAX_GAMEPADS || !m_GamepadGonePending[index] ||
+            (m_GamepadGoneGeneration[index] & 0xFFFFFF) != generation) {
+        return;  // it came back (or went again: that one has its own timer)
+    }
+    m_GamepadGonePending[index] = false;
+    m_GamepadMask &= ~(1 << index);
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Gamepad %d stayed away: the host is told",
+                index);
+    LiSendMultiControllerEvent(index, m_GamepadMask, 0, 0, 0, 0, 0, 0, 0);
 }
 
 void SdlInputHandler::handleJoystickArrivalEvent(SDL_JoyDeviceEvent* event)

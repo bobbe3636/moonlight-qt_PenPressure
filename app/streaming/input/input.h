@@ -72,6 +72,9 @@ struct DualSenseOutputReport{
 // activeGamepadMask is a short, so we're bounded by the number of mask bits
 #define MAX_GAMEPADS 16
 
+// SDL_USEREVENT code (with Session's own, in session.cpp): a gamepad that went has stayed away
+#define SDL_CODE_GAMECONTROLLER_GONE 106
+
 #define MAX_FINGERS 2
 
 #define GAMEPAD_HAPTIC_METHOD_NONE 0
@@ -132,6 +135,9 @@ public:
     void handleJoystickArrivalEvent(SDL_JoyDeviceEvent* event);
 
     void sendText(QString& string);
+
+    // A gamepad that went and didn't come back in time: the host is told now (gamepad.cpp)
+    void finishGamepadRemoval(uintptr_t indexAndGeneration);
 
     void rumble(uint16_t controllerNumber, uint16_t lowFreqMotor, uint16_t highFreqMotor);
 
@@ -263,6 +269,9 @@ private:
     Uint32 mouseEmulationTimerCallback(Uint32 interval, void* param);
 
     static
+    Uint32 gamepadGoneTimerCallback(Uint32 interval, void* param);
+
+    static
     Uint32 releaseLeftButtonTimerCallback(Uint32 interval, void* param);
 
     static
@@ -292,6 +301,10 @@ private:
     bool m_PointerRegionLockToggledByUser;
 
     int m_GamepadMask;
+    // A gamepad that went: the host keeps it this long, in case it comes back (gamepad.cpp)
+    static constexpr Uint32 k_GamepadGoneGraceMs = 5000;
+    bool m_GamepadGonePending[MAX_GAMEPADS] = {};
+    uint32_t m_GamepadGoneGeneration[MAX_GAMEPADS] = {};
     GamepadState m_GamepadState[MAX_GAMEPADS];
     QSet<short> m_KeysDown;
     bool m_FakeMouseCaptureActive;
