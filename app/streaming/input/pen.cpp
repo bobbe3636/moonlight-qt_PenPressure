@@ -43,8 +43,63 @@ static constexpr double k_Pi = 3.14159265358979323846;
 // Report 0x10: [0] id, [1] flags (tip, barrel1, barrel2, eraser, invert, in range, ...),
 // [2..4] X, [5..7] Y, [8..9] pressure (0..8191), [10..11] tilt, [16] hover distance (0..63).
 
+// The tablet's latest pressures with the time each arrived. Windows hands the pen's samples over
+// several at a time, each with its own time: a sample gets the pressure the tablet reported
+// then, not the newest one for all of them (which made the pressure go in steps, and run ahead
+// of the position).
+struct PressureHistory
+{
+    struct Entry {
+        uint64_t time;   // QueryPerformanceCounter
+        float pressure;  // 0..1
+    };
+    SRWLOCK lock = SRWLOCK_INIT;
+    Entry entries[64] = {};
+    unsigned next = 0;
+
+    static uint64_t now()
+    {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        return (uint64_t)t.QuadPart;
+    }
+
+    void add(float pressure)
+    {
+        AcquireSRWLockExclusive(&lock);
+        entries[next % 64] = { now(), pressure };
+        next++;
+        ReleaseSRWLockExclusive(&lock);
+    }
+
+    // The pressure reported last before `time` (a sample's PerformanceCount), if within 50 ms of it
+    bool at(uint64_t time, float& pressure)
+    {
+        static const uint64_t window = [] {
+            LARGE_INTEGER f;
+            QueryPerformanceFrequency(&f);
+            return (uint64_t)f.QuadPart / 20;
+        }();
+        bool found = false;
+        if (time != 0) {
+            AcquireSRWLockShared(&lock);
+            for (unsigned i = 0; i < 64 && i < next; i++) {
+                const Entry& e = entries[(next - 1 - i) % 64];  // newest first
+                if (e.time <= time) {
+                    found = time - e.time < window;
+                    pressure = e.pressure;
+                    break;
+                }
+            }
+            ReleaseSRWLockShared(&lock);
+        }
+        return found;
+    }
+};
+
 struct WacomRawReader
 {
+    PressureHistory history;
     HANDLE handle = INVALID_HANDLE_VALUE;
     std::thread thread;
     std::atomic<bool> stop { false };
@@ -93,6 +148,7 @@ struct WacomRawReader
                 seenBarrel2 = true;
             }
             pressure = (uint16_t)(report[8] | (report[9] << 8));
+            history.add(qMin(pressure / k_MaxPressure, 1.0f));
             if (n >= 17) {
                 distance = report[16];
             }
@@ -175,6 +231,12 @@ struct WacomRawReader
     }
 };
 
+// The raw Wacom reader opened again during a stream (see handleNativePenMessage): the search runs
+// on its own thread. 0 = none, 1 = searching, 2 = done (result in s_RawOpened, may be none).
+static std::atomic<int> s_RawOpenState { 0 };
+static std::atomic<WacomRawReader*> s_RawOpened { nullptr };
+static std::thread s_RawOpenThread;
+
 // Any tablet's own reports (Wacom, Huion, XP-Pen, other standard HID pens), through Raw Input.
 //
 // Windows keeps a HID pen's collection to itself (another reader gets a sharing violation) but
@@ -188,6 +250,7 @@ struct WacomRawReader
 
 struct HidPenReader
 {
+    PressureHistory history;
     std::thread thread;
     HANDLE ready = nullptr;
     std::atomic<DWORD> threadId { 0 };
@@ -275,6 +338,7 @@ struct HidPenReader
             }
         }
         pressure = qMin((float)value / d.pressureMax, 1.0f);
+        history.add(pressure);
         buttons = pressed;
         if (pressed & k_Barrel2) {
             seenBarrel2 = true;
@@ -588,7 +652,7 @@ static void logPenStats(WacomRawReader* raw, WintabPen* wt)
     uint32_t wintabPackets = wt != nullptr ? wt->packetCount.load() - s_Stats.wintabAtStart : 0;
     SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                 "Pen stats: %.0f messages/s, %.0f samples sent/s, raw tablet %.0f reports/s, Wintab %.0f packets/s, "
-                "max gap %u ms, %u/%u contact samples used the latest raw/Wintab pressure",
+                "max gap %u ms, %u/%u contact samples had no tablet pressure of their own time (used the latest)",
                 s_Stats.messages * 1000.0 / elapsed, s_Stats.sent * 1000.0 / elapsed,
                 rawReports * 1000.0 / elapsed, wintabPackets * 1000.0 / elapsed, s_Stats.maxGapMs,
                 s_Stats.sharedPressure, s_Stats.contactSamples);
@@ -614,6 +678,95 @@ static UINT takeFocusMessage()
 {
     static UINT message = RegisterWindowMessageW(L"MoonlightTakeFocus");
     return message;
+}
+
+// Sent to the stream window that takes the focus from this one: the modifier keys (wParam: a bit
+// each for left/right Shift, Ctrl, Alt, as k_ModifierKeys) held down on the host are its to
+// release now.
+static UINT adoptKeysMessage()
+{
+    static UINT message = RegisterWindowMessageW(L"MoonlightAdoptKeys");
+    return message;
+}
+
+static constexpr short k_ModifierKeys[] = { VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU };
+
+// The focus moves to another screen's window with Alt, Ctrl or Shift held (the pen crossing to
+// that screen takes the focus with it): they stay down on the host, and that window releases
+// them when the user lets go. Released here and never pressed again, Alt + drag stopped working
+// mid-gesture. Every other key is released as before.
+void SdlInputHandler::handOverHeldModifiers()
+{
+    unsigned held = m_AdoptedModifiers;
+    m_AdoptedModifiers = 0;
+    HWND foreground = GetForegroundWindow();
+    bool toStreamWindow = m_MultiScreen && foreground != nullptr && foreground != (HWND)m_NativePenHwnd &&
+                          GetPropW(foreground, k_StreamWindowProp) != nullptr;
+    for (unsigned i = 0; i < SDL_arraysize(k_ModifierKeys); i++) {
+        if (toStreamWindow && m_KeysDown.remove(k_ModifierKeys[i])) {
+            held |= 1u << i;
+        }
+        else if (!toStreamWindow && (held & (1u << i))) {
+            LiSendKeyboardEvent(k_ModifierKeys[i], KEY_ACTION_UP, 0);  // ours from another window: released
+        }
+    }
+    if (toStreamWindow && held != 0) {
+        PostMessageW(foreground, adoptKeysMessage(), held, 0);
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Focus to another screen's window: it has the held modifier keys now");
+    }
+}
+
+void SdlInputHandler::adoptHeldModifiers(unsigned modifiers)
+{
+    m_AdoptedModifiers |= modifiers & ((1u << SDL_arraysize(k_ModifierKeys)) - 1);
+    releaseAdoptedModifiers(false);  // those let go meanwhile
+}
+
+// Adopted modifier keys the user has let go (all of them: `all`) are released on the host. SDL
+// doesn't tell us: it never saw them pressed in this window.
+void SdlInputHandler::releaseAdoptedModifiers(bool all)
+{
+    for (unsigned i = 0; m_AdoptedModifiers != 0 && i < SDL_arraysize(k_ModifierKeys); i++) {
+        if ((m_AdoptedModifiers & (1u << i)) && (all || !(GetAsyncKeyState(k_ModifierKeys[i]) & 0x8000))) {
+            m_AdoptedModifiers &= ~(1u << i);
+            LiSendKeyboardEvent(k_ModifierKeys[i], KEY_ACTION_UP, 0);
+        }
+    }
+}
+
+// A tablet driver's own clicks for the pen's side buttons (Huion's: plain right and middle
+// clicks). The pen's movement never reaches SDL as mouse movement, so SDL doesn't keep the mouse
+// when the pen leaves the window with a button held, as it does for a mouse: released over the
+// window's border, the menu button, another screen's window or another app, the click's release
+// went there and the button stayed down on the host. So the window keeps the mouse from such a
+// press until every button is up.
+void SdlInputHandler::capturePenDriverButton(void* hwndPtr, unsigned int msg, uintptr_t wParam)
+{
+    HWND hwnd = (HWND)hwndPtr;
+    switch (msg) {
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
+        if (!m_PenButtonCapture && m_PenInRange && GetTickCount64() - m_LastPenMessageMs < 250 && GetCapture() == nullptr) {
+            SetCapture(hwnd);
+            m_PenButtonCapture = true;
+        }
+        break;
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
+        if (m_PenButtonCapture && !(wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2))) {
+            m_PenButtonCapture = false;
+            if (GetCapture() == hwnd) {
+                ReleaseCapture();
+            }
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        m_PenButtonCapture = false;
+        break;
+    }
 }
 
 static bool clientRectOnScreen(HWND hwnd, RECT& rect)
@@ -750,6 +903,14 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         return 0;
     }
+    if (msg == adoptKeysMessage()) {
+        ((SdlInputHandler*)refData)->adoptHeldModifiers((unsigned)wParam);
+        return 0;
+    }
+    if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
+        ((SdlInputHandler*)refData)->releaseAdoptedModifiers(false);
+    }
+    ((SdlInputHandler*)refData)->capturePenDriverButton(hwnd, msg, wParam);
 
     switch (msg) {
     case WM_POINTERENTER:
@@ -880,6 +1041,11 @@ void SdlInputHandler::removeNativePenHook()
         m_NativePenHwnd = nullptr;
     }
 
+    if (s_RawOpenThread.joinable()) {
+        s_RawOpenThread.join();  // a search for the tablet still under way
+    }
+    s_RawOpenState = 0;
+    delete s_RawOpened.exchange(nullptr);
     delete (WacomRawReader*)m_WacomRaw;
     m_WacomRaw = nullptr;
     delete (HidPenReader*)m_HidPen;
@@ -927,20 +1093,34 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
     // The raw Wacom reader opens again if it isn't running: a pen display's tablet goes away while
     // its screen sleeps, so at a stream's start it may not have been there (no full pressure range,
     // no side buttons for the whole stream), or it went away since. On the pen's use, every 2 s at most.
-    if (m_Wintab == nullptr && (m_WacomRaw == nullptr || ((WacomRawReader*)m_WacomRaw)->exited)) {
+    // Looking for the tablet lists every HID device (tens of milliseconds): on a thread of its
+    // own, not here in the middle of a stroke.
+    if (s_RawOpenState == 2) {
+        s_RawOpenThread.join();
+        s_RawOpenState = 0;
+        WacomRawReader* opened = s_RawOpened.exchange(nullptr);
+        if (opened != nullptr && m_Wintab == nullptr && m_WacomRaw == nullptr) {
+            m_WacomRaw = opened;
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Raw Wacom reader opened (again)");
+            m_RawReaderRetryMs = 2000;
+        }
+        else {
+            delete opened;
+            m_RawReaderRetryMs = qMin<uint32_t>(m_RawReaderRetryMs * 2, 60000);
+        }
+    }
+    if (m_Wintab == nullptr && s_RawOpenState == 0 && (m_WacomRaw == nullptr || ((WacomRawReader*)m_WacomRaw)->exited)) {
         // Backing off to once a minute: with another tablet (no Wacom) there's nothing to find
         uint64_t now = GetTickCount64();
         if (now - m_LastRawReaderAttemptMs >= m_RawReaderRetryMs) {
             m_LastRawReaderAttemptMs = now;
-            delete (WacomRawReader*)m_WacomRaw;
-            m_WacomRaw = WacomRawReader::open();
-            if (m_WacomRaw != nullptr) {
-                SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Raw Wacom reader opened (again)");
-                m_RawReaderRetryMs = 2000;
-            }
-            else {
-                m_RawReaderRetryMs = qMin<uint32_t>(m_RawReaderRetryMs * 2, 60000);
-            }
+            delete (WacomRawReader*)m_WacomRaw;  // one that has exited: nothing to wait for
+            m_WacomRaw = nullptr;
+            s_RawOpenState = 1;
+            s_RawOpenThread = std::thread([] {
+                s_RawOpened = WacomRawReader::open();
+                s_RawOpenState = 2;
+            });
         }
     }
 
@@ -1055,6 +1235,7 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         // Contact: pressure 0..1 (Windows reports 0..1024); 0.0 means unknown.
         // Hover: distance, which Windows doesn't report, so 0.0 (unknown) as well.
         float pressureOrDistance = 0.0f;
+        bool usedLatestPressure = false;  // no tablet pressure from this sample's own time
         if ((flags & POINTER_FLAG_INCONTACT) && (pen.penMask & PEN_MASK_PRESSURE)) {
             pressureOrDistance = qMin(pen.pressure / 1024.0f, 1.0f);
         }
@@ -1079,10 +1260,16 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
             }
 
             if (flags & POINTER_FLAG_INCONTACT) {
-                uint16_t rawPressure = raw->pressure;
-                if (rawPressure > 0) {
-                    pressureOrDistance = qMin(rawPressure / WacomRawReader::k_MaxPressure, 1.0f);
+                // The tablet's pressure at this sample's own time, else its latest. A stroke
+                // stays on the tablet's pressure to its end: Windows' own value (after the
+                // driver's pressure curve, 1024 levels) for the last samples made the tail jump.
+                // Never 0, which would mean "unknown" to the host.
+                float rawPressure;
+                if (!raw->history.at(pen.pointerInfo.PerformanceCount, rawPressure)) {
+                    rawPressure = qMin(raw->pressure / WacomRawReader::k_MaxPressure, 1.0f);
+                    usedLatestPressure = true;
                 }
+                pressureOrDistance = qMax(rawPressure, 1.0f / WacomRawReader::k_MaxPressure);
             }
             else if (eventType == LI_TOUCH_EVENT_HOVER) {
                 // Hover height: 1.0 = farthest the tablet senses; 0.0 would mean "unknown"
@@ -1100,7 +1287,12 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
                               ((pressed & HidPenReader::k_Barrel2) ? LI_PEN_BUTTON_SECONDARY : 0);
             }
             if (flags & POINTER_FLAG_INCONTACT) {
-                float hidPressure = hidPen->pressure;
+                // The tablet's pressure at this sample's own time, else its latest
+                float hidPressure;
+                if (!hidPen->history.at(pen.pointerInfo.PerformanceCount, hidPressure)) {
+                    hidPressure = hidPen->pressure;
+                    usedLatestPressure = true;
+                }
                 if (hidPressure > 0.0f) {
                     pressureOrDistance = hidPressure;
                 }
@@ -1139,8 +1331,8 @@ bool SdlInputHandler::handleNativePenMessage(void* hwndPtr, unsigned int msg, ui
         s_Stats.sent++;
         if (flags & POINTER_FLAG_INCONTACT) {
             s_Stats.contactSamples++;
-            if (i > 0) {
-                s_Stats.sharedPressure++;  // an older history sample paired with the latest raw pressure
+            if (usedLatestPressure) {
+                s_Stats.sharedPressure++;  // paired with the latest tablet pressure, not its own time's
             }
         }
     }
@@ -1406,6 +1598,10 @@ void SdlInputHandler::installNativePenHook() {}
 void SdlInputHandler::removeNativePenHook() {}
 bool SdlInputHandler::forwardPointerToOtherScreen() { return false; }
 void SdlInputHandler::handleForeignPointer(int, int) {}
+void SdlInputHandler::handOverHeldModifiers() {}
+void SdlInputHandler::adoptHeldModifiers(unsigned) {}
+void SdlInputHandler::releaseAdoptedModifiers(bool) {}
+void SdlInputHandler::capturePenDriverButton(void*, unsigned int, uintptr_t) {}
 bool SdlInputHandler::handleNativePenMessage(void*, unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleNativePenMouseButton(unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleWintabMessage(void*, unsigned int, uintptr_t, intptr_t) { return false; }

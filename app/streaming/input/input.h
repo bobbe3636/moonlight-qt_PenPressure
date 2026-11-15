@@ -162,6 +162,14 @@ public:
 
     void raiseAllKeys();
 
+    // Held modifier keys follow the focus between the screens' windows (pen.cpp, Windows)
+    void handOverHeldModifiers();
+    void adoptHeldModifiers(unsigned modifiers);
+    void releaseAdoptedModifiers(bool all);
+
+    // The window keeps the mouse while a tablet driver's click for a pen button is held (pen.cpp)
+    void capturePenDriverButton(void* hwnd, unsigned int msg, uintptr_t wParam);
+
     void notifyMouseLeave();
 
     void notifyFocusLost();
@@ -323,6 +331,8 @@ private:
     uint64_t m_LastRawReaderAttemptMs = 0; // last (re)open of the raw Wacom reader (pen.cpp)
     uint32_t m_RawReaderRetryMs = 2000;
     bool m_DriverMiddleHeld = false; // the pen driver's middle click (the upper switch): sent as barrel 2
+    unsigned m_AdoptedModifiers = 0; // modifier keys held when this window took the focus from another screen's
+    bool m_PenButtonCapture = false; // the window keeps the mouse for a pen button's click (driver-made)
     bool m_PenInRange = false;       // the pen hovers or touches (WM_POINTER)
     bool m_PenContactSent = false;   // the host has the pen touching (the last pen event sent)
     uint64_t m_LastFocusRequestMs = 0;  // the pen last took the focus from another screen's window

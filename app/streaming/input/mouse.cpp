@@ -31,6 +31,16 @@ void SdlInputHandler::handleMouseButtonEvent(SDL_MouseButtonEvent* event)
         return;
     }
 
+    // The last button of a drag that left the window is up: the mouse kept for it is let go now
+    // (not only on the next movement, which may never come to this window)
+    if (event->state == SDL_RELEASED && m_PendingMouseButtonsAllUpOnVideoRegionLeave &&
+            SDL_GetMouseState(nullptr, nullptr) == 0) {
+        if (m_NeedsManualCaptureOnLeave) {
+            SDL_CaptureMouse(SDL_FALSE);
+        }
+        m_PendingMouseButtonsAllUpOnVideoRegionLeave = false;
+    }
+
 #if SDL_VERSION_ATLEAST(2, 0, 18)
     // Several screens: a drag (a window, a file) can go on into another screen's window, in
     // immersive mode too, so the pointer is free while a button is held
@@ -134,6 +144,10 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
         // screen (the button stays down; its release still comes here, and drops it there)
         if (!mouseInVideoRegion && SDL_GetMouseState(nullptr, nullptr) != 0 && forwardPointerToOtherScreen()) {
             m_MouseWasInVideoRegion = false;
+            // The mouse we kept for this drag is let go when its buttons are up (below, on the
+            // next movement). Without this the window believed it still had the mouse after a
+            // drag dropped on another screen, and went on following the pointer there.
+            m_PendingMouseButtonsAllUpOnVideoRegionLeave = true;
             return;
         }
 

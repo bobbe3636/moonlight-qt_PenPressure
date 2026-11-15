@@ -302,6 +302,9 @@ void SdlInputHandler::notifyFocusLost()
         setCaptureActive(false);
     }
 
+    // Held Alt/Ctrl/Shift go with the focus to another screen's window (pen.cpp)
+    handOverHeldModifiers();
+
     // Raise all keys that are currently pressed. If we don't do this, certain keys
     // used in shortcuts that cause focus loss (such as Alt+Tab) may get stuck down.
     raiseAllKeys();
