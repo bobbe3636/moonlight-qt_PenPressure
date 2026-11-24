@@ -1,5 +1,6 @@
 #include "session.h"
 #include "streammenu.h"
+#include "clipboardsync.h"
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
@@ -83,7 +84,8 @@ CONNECTION_LISTENER_CALLBACKS Session::k_ConnCallbacks = {
     Session::clRumbleTriggers,
     Session::clSetMotionEventState,
     Session::clSetControllerLED,
-    Session::clSetAdaptiveTriggers
+    Session::clSetAdaptiveTriggers,
+    Session::clHostMessage
 };
 
 Session* Session::s_ActiveSession;
@@ -305,6 +307,17 @@ void Session::clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlag
 
     setControllerLEDEvent.user.data2 = (void *) state;
     SDL_PushEvent(&setControllerLEDEvent);
+}
+
+void Session::clHostMessage(uint16_t type, const uint8_t* data, uint32_t length)
+{
+    // On the control stream's thread: kept by the input code, applied on the main thread
+    if (SdlInputHandler::queueHostMessage(type, data, length)) {
+        SDL_Event event = {};
+        event.type = SDL_USEREVENT;
+        event.user.code = SDL_CODE_HOST_CURSOR;
+        SDL_PushEvent(&event);
+    }
 }
 
 
@@ -2028,6 +2041,16 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
+#ifdef Q_OS_WIN32
+    // The host's pointer drawn here (if the host can send it; hostcursor.cpp), and text copy and
+    // paste between the two PCs (clipboardsync.cpp)
+    m_InputHandler->setHostCursorWanted(m_Preferences->localCursor);
+    if (m_Preferences->clipboardSync) {
+        m_ClipboardSync = new ClipboardSync(m_Computer);
+        m_ClipboardSync->setWindow(m_Window);
+    }
+#endif
+
     // Immersive mode: the mouse starts locked in the window (a single screen; with extra screens it
     // has to reach the other windows, so each window's menu or shortcut locks it)
     if (m_Preferences->immersiveMode && m_Preferences->extraScreens == 0 && !m_IsCompanion) {
@@ -2206,6 +2229,9 @@ void Session::exec()
             case SDL_CODE_GAMECONTROLLER_GONE:
                 m_InputHandler->finishGamepadRemoval((uintptr_t)event.user.data1);
                 break;
+            case SDL_CODE_HOST_CURSOR:
+                m_InputHandler->applyHostCursor();
+                break;
             default:
                 SDL_assert(false);
             }
@@ -2219,12 +2245,18 @@ void Session::exec()
                     m_AudioMuted = true;
                 }
                 m_InputHandler->notifyFocusLost();
+                if (m_ClipboardSync != nullptr) {
+                    m_ClipboardSync->focusLost();
+                }
                 break;
             case SDL_WINDOWEVENT_FOCUS_GAINED:
                 if (m_Preferences->muteOnFocusLoss) {
                     m_AudioMuted = false;
                 }
                 m_InputHandler->notifyFocusGained();
+                if (m_ClipboardSync != nullptr) {
+                    m_ClipboardSync->focusGained();
+                }
                 break;
             case SDL_WINDOWEVENT_LEAVE:
                 m_InputHandler->notifyMouseLeave();
@@ -2517,6 +2549,9 @@ DispatchDeferredCleanup:
 
     // Raise any keys that are still down
     m_InputHandler->raiseAllKeys();
+
+    delete m_ClipboardSync;
+    m_ClipboardSync = nullptr;
 
     // Destroy the input handler now. This must be destroyed
     // before allowwing the UI to continue execution or it could

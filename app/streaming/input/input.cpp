@@ -197,6 +197,7 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
 SdlInputHandler::~SdlInputHandler()
 {
     removeNativePenHook();
+    destroyHostCursor();
 
     for (int i = 0; i < MAX_GAMEPADS; i++) {
         if (m_GamepadState[i].mouseEmulationTimer != 0) {
@@ -363,11 +364,16 @@ void SdlInputHandler::setExtraScreensActive(bool active, bool absoluteMousePref,
 void SdlInputHandler::setCaptureActive(bool active)
 {
     if (active) {
+        // The host's pointer drawn here only with the remote desktop mouse (hostcursor.cpp)
+        updateHostCursorMode();
+
         // If we're in relative mode, try to activate SDL's relative mouse mode
         if (m_AbsoluteMouseMode || SDL_SetRelativeMouseMode(SDL_TRUE) < 0) {
             // Relative mouse mode didn't work or was disabled, so we'll just hide the cursor
-            SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
+            // (or show the host's, when we draw it)
+            SDL_ShowCursor(capturedCursorState());
             m_FakeMouseCaptureActive = true;
+            showHostCursorNow();
         }
 
         // Synchronize the client and host cursor when activating absolute capture

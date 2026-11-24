@@ -934,6 +934,10 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         ((SdlInputHandler*)refData)->checkRetainedModifiers();
         return 0;
     }
+    // The host's pointer drawn here (hostcursor.cpp)
+    if (msg == WM_SETCURSOR && ((SdlInputHandler*)refData)->handleSetCursor(hwnd, lParam)) {
+        return TRUE;
+    }
     ((SdlInputHandler*)refData)->capturePenDriverButton(hwnd, msg, wParam);
 
     switch (msg) {

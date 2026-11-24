@@ -78,6 +78,9 @@ struct DualSenseOutputReport{
 // SDL_USEREVENT code (with Session's own, in session.cpp): a gamepad that went has stayed away
 #define SDL_CODE_GAMECONTROLLER_GONE 106
 
+// SDL_USEREVENT code: the host's pointer changed (hostcursor.cpp)
+#define SDL_CODE_HOST_CURSOR 107
+
 #define MAX_FINGERS 2
 
 #define GAMEPAD_HAPTIC_METHOD_NONE 0
@@ -201,7 +204,19 @@ public:
 
     bool isAbsoluteMouseMode() const { return m_AbsoluteMouseMode; }
 
-    bool isLocalCursorVisible() const { return m_MouseCursorCapturedVisibilityState == SDL_ENABLE; }
+    bool isLocalCursorVisible() const { return m_MouseCursorCapturedVisibilityState == SDL_ENABLE || hostCursorInUse(); }
+
+    // The host's pointer drawn here as this PC's own pointer (Apollo with vwacom, Windows):
+    // it follows the mouse and the pen with no network delay, and the host's picture leaves it out
+    // (hostcursor.cpp). A control stream message from the host, on its receive thread: true when
+    // the main thread must be woken (SDL_CODE_HOST_CURSOR).
+    static bool queueHostMessage(uint16_t type, const uint8_t* data, uint32_t length);
+    // On the main thread: what queueHostMessage() kept
+    void applyHostCursor();
+    // Asked for when the stream starts (the setting), and on or off again later (the shortcut)
+    void setHostCursorWanted(bool wanted);
+    // The pointer over the window (pen.cpp's window hook): true when handled
+    bool handleSetCursor(void* hwnd, intptr_t lParam);
 
     bool isPointerRegionLockActive() const { return m_PointerRegionLockActive; }
     // Immersive mode: the mouse locked in this window (an absolute pointer still)
@@ -267,6 +282,15 @@ private:
     void handleRelativeFingerEvent(SDL_TouchFingerEvent* event);
 
     void performSpecialKeyCombo(KeyCombo combo);
+
+    // The host's pointer (hostcursor.cpp)
+    bool hostCursorInUse() const;
+    int capturedCursorState() const;  // SDL_ShowCursor() value while capturing in the video region
+    void updateHostCursorMode();      // tells the host whether we draw its pointer
+    void showHostCursorNow();         // the pointer as it should be now, if it's over the video
+    bool hostCursorVisibleNow() const;
+    void* hostCursorForScale(double scale);  // HCURSOR (Windows)
+    void destroyHostCursor();
 
     static
     Uint32 longPressTimerCallback(Uint32 interval, void* param);
@@ -363,6 +387,22 @@ private:
     bool m_NativePenLogged;
     float m_LastPenX;
     float m_LastPenY;
+
+    // The host's pointer (hostcursor.cpp)
+    bool m_HostCursorWanted = false;    // the setting, or the shortcut: we draw the host's pointer
+    bool m_HostCursorRequested = false; // the host was asked to send it (and leave it out of the picture)
+    bool m_HostCursorActive = false;    // the host sends it (it answered)
+    bool m_HostCursorSupported = false; // the host answered once this session (the shortcut can switch it)
+    uint8_t m_HostCursorFlags = 0;      // 0x01 shown on this screen, 0x02 shown on the desktop
+    uint32_t m_HostCursorSerial = 0;    // the shape in m_HostCursorShape
+    uint8_t m_HostCursorKind = 0;
+    int m_HostCursorWidth = 0, m_HostCursorHeight = 0, m_HostCursorPitch = 0;
+    int m_HostCursorHotX = 0, m_HostCursorHotY = 0;
+    QByteArray m_HostCursorShape;
+    void* m_HostCursorHandle = nullptr; // HCURSOR built from the shape at m_HostCursorScale
+    double m_HostCursorScale = 0;
+    uint64_t m_PointerEnteredMs = 0;    // the pointer (mouse or pen) came over the window
+    uint64_t m_LastSetCursorMs = 0;
 
     SDL_TouchFingerEvent m_TouchDownEvent[MAX_FINGERS];
     SDL_TimerID m_LeftButtonReleaseTimer;

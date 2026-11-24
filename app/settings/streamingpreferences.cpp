@@ -60,6 +60,8 @@
 #define SER_STREAMMENUBUTTON "streammenubutton"
 #define SER_PRINTSCREENTOHOST "printscreentohost"
 #define SER_REMEMBERWINDOWS "rememberwindows"
+#define SER_LOCALCURSOR "localcursor"
+#define SER_CLIPBOARDSYNC "clipboardsync"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
 
@@ -179,6 +181,8 @@ void StreamingPreferences::reload()
     m_LoadedPrintScreenToHost = printScreenToHost;
     rememberWindows = settings.value(SER_REMEMBERWINDOWS, true).toBool();
     m_LoadedRememberWindows = rememberWindows;
+    localCursor = settings.value(SER_LOCALCURSOR, true).toBool();
+    clipboardSync = settings.value(SER_CLIPBOARDSYNC, true).toBool();
     enableHdr = settings.value(SER_HDR, false).toBool();
     captureSysKeysMode = static_cast<CaptureSysKeysMode>(settings.value(SER_CAPTURESYSKEYS,
                                                          static_cast<int>(CaptureSysKeysMode::CSK_OFF)).toInt());
@@ -417,6 +421,8 @@ void StreamingPreferences::save()
     settings.setValue(SER_IMMERSIVEMODE, immersiveMode);
     settings.setValue(SER_PENINPUTMODE, penInputMode);
     settings.setValue(SER_STREAMMENUBUTTON, showStreamMenuButton);
+    settings.setValue(SER_LOCALCURSOR, localCursor);
+    settings.setValue(SER_CLIPBOARDSYNC, clipboardSync);
     if (printScreenToHost != m_LoadedPrintScreenToHost) {
         // Same as above: any screen's menu can flip it
         settings.setValue(SER_PRINTSCREENTOHOST, printScreenToHost);
@@ -513,7 +519,8 @@ void StreamingPreferences::resetAllToDefaults()
         SER_GAMEPADMOUSE, SER_PACKETSIZE, SER_DETECTNETBLOCKING, SER_SHOWPERFOVERLAY, SER_SWAPMOUSEBUTTONS,
         SER_MUTEONFOCUSLOSS, SER_BACKGROUNDGAMEPAD, SER_REVERSESCROLL, SER_SWAPFACEBUTTONS, SER_GAMEPADREMAP, SER_CAPTURESYSKEYS,
         SER_KEEPAWAKE, SER_EXTRASCREENS, SER_EXTRASCREENSHALFBITRATE, SER_IMMERSIVEMODE, SER_PENINPUTMODE,
-        SER_STREAMMENUBUTTON, SER_PRINTSCREENTOHOST, SER_REMEMBERWINDOWS, SER_LANGUAGE, SER_RENDERER,
+        SER_STREAMMENUBUTTON, SER_PRINTSCREENTOHOST, SER_REMEMBERWINDOWS, SER_LOCALCURSOR, SER_CLIPBOARDSYNC,
+        SER_LANGUAGE, SER_RENDERER,
     };
     for (const char* key : keys) {
         settings.remove(key);

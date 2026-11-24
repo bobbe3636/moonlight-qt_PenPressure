@@ -184,6 +184,8 @@ public:
     Q_PROPERTY(bool showStreamMenuButton MEMBER showStreamMenuButton NOTIFY showStreamMenuButtonChanged)
     Q_PROPERTY(bool printScreenToHost MEMBER printScreenToHost NOTIFY printScreenToHostChanged)
     Q_PROPERTY(bool rememberWindows MEMBER rememberWindows NOTIFY rememberWindowsChanged)
+    Q_PROPERTY(bool localCursor MEMBER localCursor NOTIFY localCursorChanged)
+    Q_PROPERTY(bool clipboardSync MEMBER clipboardSync NOTIFY clipboardSyncChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
 
@@ -225,6 +227,8 @@ public:
     bool showStreamMenuButton;
     bool printScreenToHost; // Print Screen in a stream window goes to the host, not this PC's screenshot
     bool rememberWindows; // each screen's window opens where it was when it closed
+    bool localCursor; // the host's pointer drawn here as this PC's own (Apollo with vwacom): no delay
+    bool clipboardSync; // text copied on one PC pastes on the other (Apollo)
     int packetSize;
     AudioConfig audioConfig;
     VideoCodecConfig videoCodecConfig;
@@ -282,6 +286,8 @@ signals:
     void showStreamMenuButtonChanged();
     void printScreenToHostChanged();
     void rememberWindowsChanged();
+    void localCursorChanged();
+    void clipboardSyncChanged();
     void languageChanged();
     void rendererSelectionChanged();
 

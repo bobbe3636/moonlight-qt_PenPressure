@@ -232,7 +232,11 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
                     "Detected show mouse combo");
 
-        if (!SDL_GetRelativeMouseMode()) {
+        if (m_HostCursorSupported) {
+            // The host's pointer drawn here, or back in the host's picture (hostcursor.cpp)
+            setHostCursorWanted(!m_HostCursorWanted);
+        }
+        else if (!SDL_GetRelativeMouseMode()) {
             m_MouseCursorCapturedVisibilityState = !m_MouseCursorCapturedVisibilityState;
             SDL_ShowCursor(m_MouseCursorCapturedVisibilityState);
         }

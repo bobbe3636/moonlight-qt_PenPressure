@@ -92,6 +92,8 @@ public:
     }
 };
 
+class ClipboardSync;
+
 class Session : public QObject
 {
     Q_OBJECT
@@ -318,6 +320,10 @@ private:
     static
     void clSetAdaptiveTriggers(uint16_t controllerNumber, uint8_t eventFlags, uint8_t typeLeft, uint8_t typeRight, uint8_t *left, uint8_t *right);
 
+    // The host's own control messages (vwacom extension: the host's pointer)
+    static
+    void clHostMessage(uint16_t type, const uint8_t* data, uint32_t length);
+
     static
     int arInit(int audioConfiguration,
                const POPUS_MULTISTREAM_CONFIGURATION opusConfig,
@@ -362,6 +368,7 @@ private:
     QQuickWindow* m_QtWindow;
     bool m_UnexpectedTermination;
     SdlInputHandler* m_InputHandler;
+    ClipboardSync* m_ClipboardSync = nullptr;  // text copy and paste between the two PCs
     int m_MouseEmulationRefCount;
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;

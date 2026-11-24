@@ -195,9 +195,11 @@ void SdlInputHandler::handleMouseMotionEvent(SDL_MouseMotionEvent* event)
             LiSendMousePositionEvent((short)x, (short)y, dst.w, dst.h);
         }
 
-        // Adjust the cursor visibility if applicable
+        // Adjust the cursor visibility if applicable (over the picture: hidden, or the host's
+        // pointer when we draw it; outside it: this PC's arrow)
         if (mouseInVideoRegion ^ m_MouseWasInVideoRegion) {
-            SDL_ShowCursor((mouseInVideoRegion && m_MouseCursorCapturedVisibilityState == SDL_DISABLE) ? SDL_DISABLE : SDL_ENABLE);
+            SDL_ShowCursor((mouseInVideoRegion && capturedCursorState() == SDL_DISABLE) ? SDL_DISABLE : SDL_ENABLE);
+            showHostCursorNow();  // SDL just put up its arrow
             if (!mouseInVideoRegion && buttonState != 0) {
                 // If we still have a button pressed on leave, wait for that to come up
                 // before we stop sending mouse position events.

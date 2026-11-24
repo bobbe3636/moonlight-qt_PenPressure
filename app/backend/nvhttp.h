@@ -178,6 +178,13 @@ public:
     QImage
     getBoxArt(int appId);
 
+    // The host's clipboard text (Apollo), UTF-8; throws on errors
+    QByteArray
+    getClipboardText();
+
+    void
+    setClipboardText(const QByteArray& utf8);
+
     static
     QVector<NvDisplayMode>
     getDisplayModeList(QString serverInfo);
@@ -188,12 +195,14 @@ private:
     void
     handleSslErrors(QNetworkReply* reply, const QList<QSslError>& errors);
 
+    // body: a POST of it (otherwise a GET)
     QNetworkReply*
     openConnection(QUrl baseUrl,
                    QString command,
                    QString arguments,
                    int timeoutMs,
-                   NvLogLevel logLevel);
+                   NvLogLevel logLevel,
+                   const QByteArray* body = nullptr);
 
     NvAddress m_Address;
     QNetworkAccessManager* m_Nam;

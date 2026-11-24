@@ -28,6 +28,11 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
+      # The host's pointer messages (vwacom extension) in the protocol library, an upstream
+      # submodule: patched here instead of forked. Stops the build if upstream moved the anchors.
+      - name: Patch moonlight-common-c
+        run: python scripts/patch-common-c.py moonlight-common-c/moonlight-common-c
+
       - name: Download dependencies
         run: powershell ./setup-deps.ps1
 

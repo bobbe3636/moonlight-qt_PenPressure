@@ -404,6 +404,31 @@ NvHTTP::getBoxArt(int appId)
 }
 
 QByteArray
+NvHTTP::getClipboardText()
+{
+    QNetworkReply* reply = openConnection(m_BaseUrlHttps,
+                                          "actions/clipboard",
+                                          "type=text",
+                                          REQUEST_TIMEOUT_MS,
+                                          NvLogLevel::NVLL_ERROR);
+    QByteArray text = reply->readAll();
+    delete reply;
+    return text;
+}
+
+void
+NvHTTP::setClipboardText(const QByteArray& utf8)
+{
+    QNetworkReply* reply = openConnection(m_BaseUrlHttps,
+                                          "actions/clipboard",
+                                          "type=text",
+                                          REQUEST_TIMEOUT_MS,
+                                          NvLogLevel::NVLL_ERROR,
+                                          &utf8);
+    delete reply;
+}
+
+QByteArray
 NvHTTP::getXmlStringFromHex(QString xml,
                             QString tagName)
 {
@@ -483,7 +508,8 @@ NvHTTP::openConnection(QUrl baseUrl,
                        QString command,
                        QString arguments,
                        int timeoutMs,
-                       NvLogLevel logLevel)
+                       NvLogLevel logLevel,
+                       const QByteArray* body)
 {
     // Port must be set
     Q_ASSERT(baseUrl.port(0) != 0);
@@ -518,7 +544,14 @@ NvHTTP::openConnection(QUrl baseUrl,
 #endif
 
     auto sslErrorsConnection = connect(m_Nam, &QNetworkAccessManager::sslErrors, this, &NvHTTP::handleSslErrors);
-    QNetworkReply* reply = m_Nam->get(request);
+    QNetworkReply* reply;
+    if (body != nullptr) {
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "text/plain; charset=utf-8");
+        reply = m_Nam->post(request, *body);
+    }
+    else {
+        reply = m_Nam->get(request);
+    }
     QEventLoop loop;
 
     // Connect the quit signals

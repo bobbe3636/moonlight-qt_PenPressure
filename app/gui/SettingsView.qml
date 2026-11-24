@@ -1586,6 +1586,42 @@ Flickable {
                 }
 
                 CheckBox {
+                    id: localCursorCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    visible: Qt.platform.os === "windows"
+                    text: qsTr("Draw the host's pointer here (no delay)")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.localCursor
+                    onCheckedChanged: {
+                        StreamingPreferences.localCursor = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("The host sends its pointer's shape and this PC draws it as its own pointer, so it follows the mouse and the pen at once instead of arriving with the picture. Needs Apollo with vwacom; with other hosts the pointer stays in the picture. Switch it while streaming with \"Show local cursor\" (Ctrl+Alt+Shift+C).")
+                }
+
+                CheckBox {
+                    id: clipboardSyncCheck
+                    hoverEnabled: true
+                    width: parent.width
+                    visible: Qt.platform.os === "windows"
+                    text: qsTr("Share the clipboard with the host (text)")
+                    font.pointSize:  12
+                    checked: StreamingPreferences.clipboardSync
+                    onCheckedChanged: {
+                        StreamingPreferences.clipboardSync = checked
+                    }
+
+                    ToolTip.delay: 1000
+                    ToolTip.timeout: 10000
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Text copied on this PC can be pasted on the host once a stream window has the focus, and text copied on the host can be pasted here once you switch to another app. Text a password manager marks as private stays on this PC. Needs Apollo, and the clipboard permissions for this device in Apollo's Clients page.")
+                }
+
+                CheckBox {
                     id: rememberWindowsCheck
                     hoverEnabled: true
                     width: parent.width

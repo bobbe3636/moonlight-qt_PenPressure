@@ -188,7 +188,9 @@ SOURCES += \
     settings/shortcuts.cpp \
     streaming/input/abstouch.cpp \
     streaming/input/pen.cpp \
+    streaming/input/hostcursor.cpp \
     streaming/streammenu.cpp \
+    streaming/clipboardsync.cpp \
     streaming/input/gamepad.cpp \
     streaming/input/input.cpp \
     streaming/input/keyboard.cpp \
@@ -234,6 +236,7 @@ HEADERS += \
     streaming/input/input.h \
     streaming/session.h \
     streaming/streammenu.h \
+    streaming/clipboardsync.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
     gui/computermodel.h \
