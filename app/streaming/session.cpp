@@ -40,6 +40,18 @@
 #define SDL_CODE_GAMECONTROLLER_SET_CONTROLLER_LED 104
 #define SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS 105
 
+// A step of a renderer rebuild that took long (see SDL_RENDER_DEVICE_RESET in Session::exec())
+static void logRebuildStep(uint64_t& stepStart, const char* step)
+{
+    uint64_t now = SDL_GetTicks64();
+    if (now - stepStart >= 500) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "Renderer rebuild: %s took %llu ms",
+                    step, (unsigned long long)(now - stepStart));
+    }
+    stepStart = now;
+}
+
 #include <openssl/rand.h>
 
 #include <QtEndian>
@@ -2337,31 +2349,23 @@ void Session::exec()
 
             // Each step of the rebuild, timed: one that takes long is logged. A rebuild once took
             // 12 minutes (the picture and the input frozen meanwhile) and the log didn't show where.
-            uint64_t rebuildStart = SDL_GetTicks64();
-            uint64_t stepStart = rebuildStart;
-            auto rebuildStep = [&](const char* step) {
-                uint64_t now = SDL_GetTicks64();
-                if (now - stepStart >= 500) {
-                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                                "Renderer rebuild: %s took %llu ms",
-                                step, (unsigned long long)(now - stepStart));
-                }
-                stepStart = now;
-            };
+            // (no initializers: the case labels after this one jump past these declarations)
+            uint64_t rebuildStart, stepStart;
+            rebuildStart = stepStart = SDL_GetTicks64();
 
             SDL_LockMutex(m_DecoderLock);
-            rebuildStep("waiting for the decoder lock");
+            logRebuildStep(stepStart, "waiting for the decoder lock");
 
             // Destroy the old decoder
             delete m_VideoDecoder;
-            rebuildStep("destroying the old decoder");
+            logRebuildStep(stepStart, "destroying the old decoder");
 
             // Insert a barrier to discard any additional window events
             // that could cause the renderer to be and recreated again.
             // We don't use SDL_FlushEvent() here because it could cause
             // important events to be lost.
             flushWindowEvents();
-            rebuildStep("the window event barrier");
+            logRebuildStep(stepStart, "the window event barrier");
 
             // Update the window display mode based on our current monitor
             // NB: Avoid a useless modeset by only doing this if it changed.
@@ -2369,14 +2373,14 @@ void Session::exec()
                 currentDisplayIndex = SDL_GetWindowDisplayIndex(m_Window);
                 updateOptimalWindowDisplayMode();
             }
-            rebuildStep("updating the display mode");
+            logRebuildStep(stepStart, "updating the display mode");
 
             // Now that the old decoder is dead, flush any events it may
             // have queued to reset itself (if this reset was the result
             // of device loss or an internal error).
             SDL_PumpEvents();
             SDL_FlushEvent(SDL_RENDER_DEVICE_RESET);
-            rebuildStep("pumping window events");
+            logRebuildStep(stepStart, "pumping window events");
 
             {
                 // If the stream exceeds the display refresh rate (plus some slack),
@@ -2400,7 +2404,7 @@ void Session::exec()
                                    enableVsync && m_Preferences->framePacing,
                                    false,
                                    s_ActiveSession->m_VideoDecoder);
-                rebuildStep("creating the new decoder");
+                logRebuildStep(stepStart, "creating the new decoder");
                 if (SDL_GetTicks64() - rebuildStart >= 2000) {
                     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
                                 "Renderer rebuild took %llu ms in all",
