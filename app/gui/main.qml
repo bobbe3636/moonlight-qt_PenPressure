@@ -50,27 +50,27 @@ ApplicationWindow {
             window.showFullScreen()
         }
 
-        // Display any modal dialogs for configuration warnings
-        if (runConfigChecks) {
-            if (SystemProperties.isWow64) {
-                wow64Dialog.open()
+        if (isGuiLaunch) {
+            // Display any modal dialogs for configuration warnings
+            if (StreamingPreferences.configurationWarnings) {
+                if (SystemProperties.isWow64) {
+                    wow64Dialog.open()
+                }
+
+                // Hardware acceleration and unmapped gamepads are checked asynchronously
+                SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
+                SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
             }
 
-            // Hardware acceleration and unmapped gamepads are checked asynchronously
-            SystemProperties.hasHardwareAccelerationChanged.connect(hasHardwareAccelerationChanged)
-            SystemProperties.unmappedGamepadsChanged.connect(hasUnmappedGamepadsChanged)
+            // We still need to load the remaining properties even if config warnings are disabled,
+            // since some of them are used by the SettingsView to enable/disable certain options.
             SystemProperties.startAsyncLoad()
         }
     }
 
     function hasHardwareAccelerationChanged() {
         if (!SystemProperties.hasHardwareAcceleration && StreamingPreferences.videoDecoderSelection !== StreamingPreferences.VDS_FORCE_SOFTWARE) {
-            if (SystemProperties.isRunningXWayland) {
-                xWaylandDialog.open()
-            }
-            else {
-                noHwDecoderDialog.open()
-            }
+            noHwDecoderDialog.open()
         }
     }
 
@@ -171,24 +171,28 @@ ApplicationWindow {
     }
 
     onVisibleChanged: {
-        // When we become invisible while streaming is going on,
-        // stop polling immediately.
-        if (!visible) {
-            inactivityTimer.stop()
+        // Polling is only managed from the window for a normal GUI launch;
+        // CLI commands (stream/quit/pair) manage it via the ComputerSeeker.
+        if (isGuiLaunch) {
+            // When we become invisible while streaming is going on,
+            // stop polling immediately.
+            if (!visible) {
+                inactivityTimer.stop()
 
-            if (pollingActive) {
-                ComputerManager.stopPollingAsync()
-                pollingActive = false
+                if (pollingActive) {
+                    ComputerManager.stopPollingAsync()
+                    pollingActive = false
+                }
             }
-        }
-        else if (active) {
-            // When we become visible and active again, start polling
-            inactivityTimer.stop()
+            else if (active) {
+                // When we become visible and active again, start polling
+                inactivityTimer.stop()
 
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
+                // Restart polling if it was stopped
+                if (!pollingActive) {
+                    ComputerManager.startPolling()
+                    pollingActive = true
+                }
             }
         }
 
@@ -197,20 +201,24 @@ ApplicationWindow {
     }
 
     onActiveChanged: {
-        if (active) {
-            // Stop the inactivity timer
-            inactivityTimer.stop()
+        // Polling is only managed from the window for a normal GUI launch;
+        // CLI commands (stream/quit/pair) manage it via the ComputerSeeker.
+        if (isGuiLaunch) {
+            if (active) {
+                // Stop the inactivity timer
+                inactivityTimer.stop()
 
-            // Restart polling if it was stopped
-            if (!pollingActive) {
-                ComputerManager.startPolling()
-                pollingActive = true
+                // Restart polling if it was stopped
+                if (!pollingActive) {
+                    ComputerManager.startPolling()
+                    pollingActive = true
+                }
             }
-        }
-        else {
-            // Start the inactivity timer to stop polling
-            // if focus does not return within a few minutes.
-            inactivityTimer.restart()
+            else {
+                // Start the inactivity timer to stop polling
+                // if focus does not return within a few minutes.
+                inactivityTimer.restart()
+            }
         }
 
         // Poll for gamepad input only when the window is in focus
@@ -451,14 +459,6 @@ ApplicationWindow {
         text: qsTr("No functioning hardware accelerated video decoder was detected by Moonlight. " +
                    "Your streaming performance may be severely degraded in this configuration.")
         helpText: qsTr("Click the Help button for more information on solving this problem.")
-        helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"
-    }
-
-    ErrorMessageDialog {
-        id: xWaylandDialog
-        text: qsTr("Hardware acceleration doesn't work on XWayland. Continuing on XWayland may result in poor streaming performance. " +
-                   "Try running with QT_QPA_PLATFORM=wayland or switch to X11.")
-        helpText: qsTr("Click the Help button for more information.")
         helpUrl: "https://github.com/moonlight-stream/moonlight-docs/wiki/Fixing-Hardware-Decoding-Problems"
     }
 

@@ -5,6 +5,9 @@
 
 #include "SDL_compat.h"
 
+#include <QSet>
+#include <QVector>
+
 struct GamepadState {
     SDL_GameController* controller;
     SDL_JoystickID jsId;
@@ -23,11 +26,11 @@ struct GamepadState {
     bool emulatedClickpadButtonDown;
 
 #if SDL_VERSION_ATLEAST(2, 0, 14)
-    uint8_t gyroReportPeriodMs;
+    uint16_t gyroReportPeriodMs;
     float lastGyroEventData[SDL_arraysize(SDL_ControllerSensorEvent::data)];
     uint32_t lastGyroEventTime;
 
-    uint8_t accelReportPeriodMs;
+    uint16_t accelReportPeriodMs;
     float lastAccelEventData[SDL_arraysize(SDL_ControllerSensorEvent::data)];
     uint32_t lastAccelEventTime;
 #endif
@@ -168,10 +171,13 @@ public:
 
     void raiseAllKeys();
 
-    // Held modifier keys follow the focus between the screens' windows (pen.cpp, Windows)
-    void handOverHeldModifiers();
-    void adoptHeldModifiers(unsigned modifiers);
-    void releaseAdoptedModifiers(bool all);
+    // Alt/Ctrl/Shift held while another screen's window takes the focus: they stay down on the
+    // host, and this window releases them through its own connection (the one that pressed them,
+    // which the host's instance needs) when the user lets go (pen.cpp, Windows)
+    bool retainModifierForOtherScreen(uint32_t keypressState);
+    void retainHeldModifiers();
+    void checkRetainedModifiers();
+    void releaseRetainedModifiers();
 
     // The window keeps the mouse while a tablet driver's click for a pen button is held (pen.cpp)
     void capturePenDriverButton(void* hwnd, unsigned int msg, uintptr_t wParam);
@@ -306,7 +312,7 @@ private:
     bool m_GamepadGonePending[MAX_GAMEPADS] = {};
     uint32_t m_GamepadGoneGeneration[MAX_GAMEPADS] = {};
     GamepadState m_GamepadState[MAX_GAMEPADS];
-    QSet<short> m_KeysDown;
+    QSet<uint32_t> m_KeysDown;
     bool m_FakeMouseCaptureActive;
     bool m_KeyboardCaptureActive;
     QString m_OldIgnoreDevices;
@@ -344,7 +350,7 @@ private:
     uint64_t m_LastRawReaderAttemptMs = 0; // last (re)open of the raw Wacom reader (pen.cpp)
     uint32_t m_RawReaderRetryMs = 2000;
     bool m_DriverMiddleHeld = false; // the pen driver's middle click (the upper switch): sent as barrel 2
-    unsigned m_AdoptedModifiers = 0; // modifier keys held when this window took the focus from another screen's
+    QVector<uint32_t> m_RetainedModifiers; // modifier keys kept down on the host after the focus moved to another screen's window
     bool m_PenButtonCapture = false; // the window keeps the mouse for a pen button's click (driver-made)
     bool m_PenInRange = false;       // the pen hovers or touches (WM_POINTER)
     bool m_PenContactSent = false;   // the host has the pen touching (the last pen event sent)

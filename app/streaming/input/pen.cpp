@@ -12,6 +12,7 @@
 #include <setupapi.h>
 #include <hidsdi.h>
 
+#include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cmath>
@@ -680,57 +681,83 @@ static UINT takeFocusMessage()
     return message;
 }
 
-// Sent to the stream window that takes the focus from this one: the modifier keys (wParam: a bit
-// each for left/right Shift, Ctrl, Alt, as k_ModifierKeys) held down on the host are its to
-// release now.
-static UINT adoptKeysMessage()
-{
-    static UINT message = RegisterWindowMessageW(L"MoonlightAdoptKeys");
-    return message;
-}
-
+// Held modifier keys across the screens' windows. When another screen's window takes the focus
+// (the pen crossing to it, or a click), SDL reports every held key of this window released, and
+// they went up on the host: an Alt + drag that moved on to another screen lost its Alt. Alt, Ctrl
+// and Shift still physically held stay down on the host instead, and this window sends their
+// release when the user lets go: through its own connection, the one that pressed them (each
+// screen's host instance only releases keys it pressed). A timer on this window watches them.
 static constexpr short k_ModifierKeys[] = { VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU };
+static constexpr UINT_PTR k_RetainedModifiersTimer = 0x4D4F44; // 'MOD'
 
-// The focus moves to another screen's window with Alt, Ctrl or Shift held (the pen crossing to
-// that screen takes the focus with it): they stay down on the host, and that window releases
-// them when the user lets go. Released here and never pressed again, Alt + drag stopped working
-// mid-gesture. Every other key is released as before.
-void SdlInputHandler::handOverHeldModifiers()
+static bool isModifierKeypress(uint32_t keypressState)
 {
-    unsigned held = m_AdoptedModifiers;
-    m_AdoptedModifiers = 0;
+    short vk = (short)(keypressState & 0xFF);
+    return std::find(std::begin(k_ModifierKeys), std::end(k_ModifierKeys), vk) != std::end(k_ModifierKeys);
+}
+
+static bool focusWentToOtherStreamWindow(HWND self)
+{
     HWND foreground = GetForegroundWindow();
-    bool toStreamWindow = m_MultiScreen && foreground != nullptr && foreground != (HWND)m_NativePenHwnd &&
-                          GetPropW(foreground, k_StreamWindowProp) != nullptr;
-    for (unsigned i = 0; i < SDL_arraysize(k_ModifierKeys); i++) {
-        if (toStreamWindow && m_KeysDown.remove(k_ModifierKeys[i])) {
-            held |= 1u << i;
-        }
-        else if (!toStreamWindow && (held & (1u << i))) {
-            LiSendKeyboardEvent(k_ModifierKeys[i], KEY_ACTION_UP, 0);  // ours from another window: released
+    return foreground != nullptr && foreground != self && GetPropW(foreground, k_StreamWindowProp) != nullptr;
+}
+
+bool SdlInputHandler::retainModifierForOtherScreen(uint32_t keypressState)
+{
+    HWND hwnd = (HWND)m_NativePenHwnd;
+    if (!m_MultiScreen || hwnd == nullptr || !isModifierKeypress(keypressState) ||
+            !(GetAsyncKeyState(keypressState & 0xFF) & 0x8000) || !focusWentToOtherStreamWindow(hwnd)) {
+        return false;
+    }
+    m_KeysDown.remove(keypressState);
+    if (!m_RetainedModifiers.contains(keypressState)) {
+        m_RetainedModifiers.append(keypressState);
+    }
+    SetTimer(hwnd, k_RetainedModifiersTimer, 30, nullptr);
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Focus to another screen's window with key 0x%02x held: it stays down on the host until released",
+                (unsigned)(keypressState & 0xFF));
+    return true;
+}
+
+void SdlInputHandler::retainHeldModifiers()
+{
+    QList<uint32_t> held;
+    for (uint32_t keypressState : std::as_const(m_KeysDown)) {
+        if (isModifierKeypress(keypressState)) {
+            held.append(keypressState);
         }
     }
-    if (toStreamWindow && held != 0) {
-        PostMessageW(foreground, adoptKeysMessage(), held, 0);
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "Focus to another screen's window: it has the held modifier keys now");
+    for (uint32_t keypressState : held) {
+        retainModifierForOtherScreen(keypressState);
     }
 }
 
-void SdlInputHandler::adoptHeldModifiers(unsigned modifiers)
+void SdlInputHandler::checkRetainedModifiers()
 {
-    m_AdoptedModifiers |= modifiers & ((1u << SDL_arraysize(k_ModifierKeys)) - 1);
-    releaseAdoptedModifiers(false);  // those let go meanwhile
+    for (int i = m_RetainedModifiers.size() - 1; i >= 0; i--) {
+        uint32_t keypressState = m_RetainedModifiers[i];
+        if (!(GetAsyncKeyState(keypressState & 0xFF) & 0x8000)) {
+            // As raiseAllKeys() releases a key
+            LiSendKeyboardEvent2((short)(keypressState & 0xFFFF), KEY_ACTION_UP,
+                                 (char)((keypressState >> 16) & 0xFF), (char)((keypressState >> 24) & 0xFF));
+            m_RetainedModifiers.removeAt(i);
+        }
+    }
+    if (m_RetainedModifiers.isEmpty() && m_NativePenHwnd != nullptr) {
+        KillTimer((HWND)m_NativePenHwnd, k_RetainedModifiersTimer);
+    }
 }
 
-// Adopted modifier keys the user has let go (all of them: `all`) are released on the host. SDL
-// doesn't tell us: it never saw them pressed in this window.
-void SdlInputHandler::releaseAdoptedModifiers(bool all)
+void SdlInputHandler::releaseRetainedModifiers()
 {
-    for (unsigned i = 0; m_AdoptedModifiers != 0 && i < SDL_arraysize(k_ModifierKeys); i++) {
-        if ((m_AdoptedModifiers & (1u << i)) && (all || !(GetAsyncKeyState(k_ModifierKeys[i]) & 0x8000))) {
-            m_AdoptedModifiers &= ~(1u << i);
-            LiSendKeyboardEvent(k_ModifierKeys[i], KEY_ACTION_UP, 0);
-        }
+    for (uint32_t keypressState : std::as_const(m_RetainedModifiers)) {
+        LiSendKeyboardEvent2((short)(keypressState & 0xFFFF), KEY_ACTION_UP,
+                             (char)((keypressState >> 16) & 0xFF), (char)((keypressState >> 24) & 0xFF));
+    }
+    m_RetainedModifiers.clear();
+    if (m_NativePenHwnd != nullptr) {
+        KillTimer((HWND)m_NativePenHwnd, k_RetainedModifiersTimer);
     }
 }
 
@@ -903,12 +930,9 @@ static LRESULT CALLBACK penSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         }
         return 0;
     }
-    if (msg == adoptKeysMessage()) {
-        ((SdlInputHandler*)refData)->adoptHeldModifiers((unsigned)wParam);
+    if (msg == WM_TIMER && wParam == k_RetainedModifiersTimer) {
+        ((SdlInputHandler*)refData)->checkRetainedModifiers();
         return 0;
-    }
-    if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
-        ((SdlInputHandler*)refData)->releaseAdoptedModifiers(false);
     }
     ((SdlInputHandler*)refData)->capturePenDriverButton(hwnd, msg, wParam);
 
@@ -1033,6 +1057,8 @@ void SdlInputHandler::installNativePenHook()
 
 void SdlInputHandler::removeNativePenHook()
 {
+    releaseRetainedModifiers();
+
     if (m_NativePenHwnd != nullptr) {
         if (IsWindow((HWND)m_NativePenHwnd)) {
             RemoveWindowSubclass((HWND)m_NativePenHwnd, penSubclassProc, k_PenSubclassId);
@@ -1598,9 +1624,10 @@ void SdlInputHandler::installNativePenHook() {}
 void SdlInputHandler::removeNativePenHook() {}
 bool SdlInputHandler::forwardPointerToOtherScreen() { return false; }
 void SdlInputHandler::handleForeignPointer(int, int) {}
-void SdlInputHandler::handOverHeldModifiers() {}
-void SdlInputHandler::adoptHeldModifiers(unsigned) {}
-void SdlInputHandler::releaseAdoptedModifiers(bool) {}
+bool SdlInputHandler::retainModifierForOtherScreen(uint32_t) { return false; }
+void SdlInputHandler::retainHeldModifiers() {}
+void SdlInputHandler::checkRetainedModifiers() {}
+void SdlInputHandler::releaseRetainedModifiers() {}
 void SdlInputHandler::capturePenDriverButton(void*, unsigned int, uintptr_t) {}
 bool SdlInputHandler::handleNativePenMessage(void*, unsigned int, uintptr_t) { return false; }
 bool SdlInputHandler::handleNativePenMouseButton(unsigned int, uintptr_t) { return false; }
