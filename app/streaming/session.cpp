@@ -2335,16 +2335,33 @@ void Session::exec()
                             event.type);
             }
 
+            // Each step of the rebuild, timed: one that takes long is logged. A rebuild once took
+            // 12 minutes (the picture and the input frozen meanwhile) and the log didn't show where.
+            uint64_t rebuildStart = SDL_GetTicks64();
+            uint64_t stepStart = rebuildStart;
+            auto rebuildStep = [&](const char* step) {
+                uint64_t now = SDL_GetTicks64();
+                if (now - stepStart >= 500) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Renderer rebuild: %s took %llu ms",
+                                step, (unsigned long long)(now - stepStart));
+                }
+                stepStart = now;
+            };
+
             SDL_LockMutex(m_DecoderLock);
+            rebuildStep("waiting for the decoder lock");
 
             // Destroy the old decoder
             delete m_VideoDecoder;
+            rebuildStep("destroying the old decoder");
 
             // Insert a barrier to discard any additional window events
             // that could cause the renderer to be and recreated again.
             // We don't use SDL_FlushEvent() here because it could cause
             // important events to be lost.
             flushWindowEvents();
+            rebuildStep("the window event barrier");
 
             // Update the window display mode based on our current monitor
             // NB: Avoid a useless modeset by only doing this if it changed.
@@ -2352,12 +2369,14 @@ void Session::exec()
                 currentDisplayIndex = SDL_GetWindowDisplayIndex(m_Window);
                 updateOptimalWindowDisplayMode();
             }
+            rebuildStep("updating the display mode");
 
             // Now that the old decoder is dead, flush any events it may
             // have queued to reset itself (if this reset was the result
             // of device loss or an internal error).
             SDL_PumpEvents();
             SDL_FlushEvent(SDL_RENDER_DEVICE_RESET);
+            rebuildStep("pumping window events");
 
             {
                 // If the stream exceeds the display refresh rate (plus some slack),
@@ -2373,14 +2392,21 @@ void Session::exec()
 
                 // Choose a new decoder (hopefully the same one, but possibly
                 // not if a GPU was removed or something).
-                if (!chooseDecoder(m_Preferences->videoDecoderSelection,
+                bool decoderChosen = chooseDecoder(m_Preferences->videoDecoderSelection,
                                    m_Preferences->rendererSelection,
                                    m_Window, m_ActiveVideoFormat, m_ActiveVideoWidth,
                                    m_ActiveVideoHeight, m_ActiveVideoFrameRate,
                                    enableVsync,
                                    enableVsync && m_Preferences->framePacing,
                                    false,
-                                   s_ActiveSession->m_VideoDecoder)) {
+                                   s_ActiveSession->m_VideoDecoder);
+                rebuildStep("creating the new decoder");
+                if (SDL_GetTicks64() - rebuildStart >= 2000) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                                "Renderer rebuild took %llu ms in all",
+                                (unsigned long long)(SDL_GetTicks64() - rebuildStart));
+                }
+                if (!decoderChosen) {
                     SDL_UnlockMutex(m_DecoderLock);
                     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                                  "Failed to recreate decoder after reset");
